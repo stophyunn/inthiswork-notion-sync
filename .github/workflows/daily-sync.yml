@@ -27,8 +27,8 @@ on:
         default: ""
         type: string
   schedule:
-    - cron: "10 9 * * *"
-      timezone: "Asia/Seoul"
+    # GitHub Actions cron is UTC. 00:10 UTC is 09:10 KST (UTC+9).
+    - cron: "10 0 * * *"
 
 permissions:
   contents: read
@@ -59,7 +59,7 @@ jobs:
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATA_SOURCE_ID: ${{ vars.NOTION_DATA_SOURCE_ID }}
-          NOTION_API_VERSION: "2026-03-11"
+          NOTION_API_VERSION: "2025-09-03"
           INTHISWORK_DESIGN_URL: "https://inthiswork.com/design"
           SYNC_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'recent' }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
@@ -71,7 +71,8 @@ jobs:
           INTHISWORK_REQUEST_DELAY_SECONDS: "2.5"
           REQUEST_TIMEOUT_SECONDS: "25"
         run: |
-          python -m src.sync | tee sync-output.txt
+          set -o pipefail
+          python -u -m src.sync 2>&1 | tee sync-output.txt
           {
             echo "## 동기화 실행 결과"
             echo '```text'

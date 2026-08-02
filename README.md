@@ -77,13 +77,15 @@
 3. `Run workflow`를 누릅니다.
 4. 입력 칸에 정확히 `CREATE`를 입력합니다.
 5. 실행이 끝난 뒤 실행 결과 페이지의 **Summary**를 엽니다.
-6. 아래와 같은 값을 복사합니다.
+6. 아래와 같은 두 값을 확인하고 Data Source ID를 복사합니다.
 
 ```text
+NOTION_DATABASE_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 NOTION_DATA_SOURCE_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
 
-> Bootstrap을 여러 번 실행하면 데이터베이스가 여러 개 만들어집니다. 최초 한 번만 실행하세요.
+> Bootstrap은 먼저 상위 페이지 접근 권한을 확인하고, 같은 상위 페이지에 같은 이름의 데이터베이스가
+> 발견되면 새로 만들지 않고 실패합니다. 그래도 최초 생성이 확인된 뒤에는 다시 실행하지 마세요.
 
 ## 4. Data Source ID를 GitHub Variable로 등록
 

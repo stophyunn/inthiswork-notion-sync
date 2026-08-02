@@ -21,6 +21,12 @@ def main() -> None:
     print("\n=== 생성 완료 ===")
     print(f"NOTION_DATABASE_ID={database_id}")
     print(f"NOTION_DATA_SOURCE_ID={data_source_id}")
+
+    github_output = os.getenv("GITHUB_OUTPUT", "").strip()
+    if github_output:
+        with open(github_output, "a", encoding="utf-8") as output:
+            output.write(f"notion_database_id={database_id}\n")
+            output.write(f"notion_data_source_id={data_source_id}\n")
     print("\nGitHub 저장소의 Settings → Secrets and variables → Actions → Variables에")
     print("위 NOTION_DATA_SOURCE_ID 값을 등록한 뒤 동기화 워크플로를 실행하세요.")
 
