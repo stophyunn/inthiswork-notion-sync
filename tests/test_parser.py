@@ -140,13 +140,17 @@ def test_tinkware_live_shape_prefers_metadata_and_splits_flat_sections():
         _fixture("tinkware_live"), "https://inthiswork.com/archives/400001"
     )
 
-    assert record.title == "팅크웨어｜UX/UI 디자이너 채용"
-    assert "UX/UI 화면 기획 및 디자인" in record.key_duties
-    assert "관련 직무 경험자" in record.target_audience
+    assert record.title == "팅크웨어｜아이나비 브랜드 콘텐츠 디자인 (경력)"
+    assert len(record.key_duties.splitlines()) == 6
+    assert "브랜드 콘텐츠 디자인" in record.key_duties
+    assert "관련 직무 경력 3년 이상" in record.target_audience
+    assert record.employment_types == ["정규직"]
+    assert record.experience_raw == "경력 3년 이상"
     assert all("오늘 핫한 공고" not in block.text for block in record.body_blocks)
-    assert sum("UX/UI 화면 기획 및 디자인" in block.text for block in record.body_blocks) == 1
+    assert sum("브랜드 콘텐츠 디자인" in block.text for block in record.body_blocks) == 1
     assert any(block.kind == "bulleted_list_item" for block in record.body_blocks)
-    assert record.collection_status == "검토 필요"
+    assert record.benefits_prize == "유연 근무제"
+    assert record.collection_status == "정상"
 
 
 def test_dmil_live_shape_ignores_publish_year_and_non_duty_design_terms():
@@ -162,3 +166,70 @@ def test_dmil_live_shape_ignores_publish_year_and_non_duty_design_terms():
     assert record.benefits_prize == "장비 지원"
     assert record.design_fields == ["콘텐츠"]
     assert all("함께 보면 좋은" not in block.text for block in record.body_blocks)
+
+
+def test_natural_headings_and_heading_attached_to_bullet_are_split():
+    html = """
+    <html><head><meta property="og:title" content="DMIL｜콘텐츠 디자이너 채용" /></head><body>
+    <article><div class="fusion-content-tb"><p>
+    이런 일을 함께해요
+    ㆍ 자사 브랜드 인스타그램 콘텐츠 및 SNS 비주얼을 디자인해요.\n[이런 분을 모시고 있어요]
+    ㆍ 포트폴리오 제출 가능자
+    디밀은 이렇게 일해요
+    ㆍ 장비 지원
+    </p></div></article></body></html>
+    """
+    record = parse_post_html(html, "https://inthiswork.com/archives/500001")
+
+    assert [block.text for block in record.body_blocks if block.kind == "heading_3"] == [
+        "이런 일을 함께해요", "이런 분을 모시고 있어요", "디밀은 이렇게 일해요"
+    ]
+    assert record.key_duties == "자사 브랜드 인스타그램 콘텐츠 및 SNS 비주얼을 디자인해요."
+    assert record.target_audience == "포트폴리오 제출 가능자"
+    assert record.benefits_prize == "장비 지원"
+
+
+def test_successful_duplicate_removal_is_normal_and_removes_decorations():
+    body = """이런 일을 함께해요
+- 모바일 게임 2D 아트 제작 보조
+이런 분을 찾고 있어요
+• 2D 아트 포트폴리오 보유자
+😉
+지원하러 가기"""
+    html = f"""
+    <html><head><meta property="og:title" content="퍼즐원스튜디오｜2D 아트 아르바이트" /></head>
+    <body><article><div class="fusion-content-tb"><p>{body}\n{body}</p></div></article></body></html>
+    """
+    record = parse_post_html(html, "https://inthiswork.com/archives/500002")
+
+    assert record.key_duties == "모바일 게임 2D 아트 제작 보조"
+    assert record.target_audience == "2D 아트 포트폴리오 보유자"
+    assert record.employment_types == ["아르바이트"]
+    assert sum(block.text == "모바일 게임 2D 아트 제작 보조" for block in record.body_blocks) == 1
+    assert all(block.text not in {"😉", "지원하러 가기"} for block in record.body_blocks)
+    assert record.collection_status == "정상"
+
+
+def test_snow_natural_sections_ignore_future_regular_job_and_parse_split_deadline():
+    html = """
+    <html><head><meta property="og:title" content="SNOW｜UI/UX 체험형 인턴 채용" />
+    <meta property="article:published_time" content="2026-08-01T00:00:00+09:00" /></head><body>
+    <article><div class="fusion-content-tb"><p>이런 경험을 할 수 있어요
+    - AI 기반 캐릭터 채팅 서비스 UI/UX 기획 및 디자인 작업 지원
+    - AI 서비스 콘텐츠 및 데이터 구성 지원
+    이런 분을 기다립니다
+    - UI/UX 포트폴리오 제출 가능자
+    향후 정규직 공고에 지원하더라도 별도 가산점은 없습니다.
+    지원서 접수 마감
+    :
+    2026.08.12(수) 23:59
+    😉</p></div></article></body></html>
+    """
+    record = parse_post_html(html, "https://inthiswork.com/archives/379538")
+
+    assert "AI 기반 캐릭터 채팅 서비스 UI/UX 기획 및 디자인 작업 지원" in record.key_duties
+    assert "AI 서비스 콘텐츠 및 데이터 구성 지원" in record.key_duties
+    assert record.target_audience == "UI/UX 포트폴리오 제출 가능자\n향후 정규직 공고에 지원하더라도 별도 가산점은 없습니다."
+    assert record.employment_types == ["인턴"]
+    assert record.deadline == "2026-08-12"
+    assert record.collection_status == "정상"

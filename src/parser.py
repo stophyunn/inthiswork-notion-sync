@@ -59,11 +59,42 @@ NOISE_SELECTORS = [
     ".recent-comments",
 ]
 
-SECTION_TITLE_RE = re.compile(
-    r"^\[?\s*(?:수행\s*업무|담당\s*업무|주요\s*업무|자격\s*요건|지원\s*자격|"
-    r"우대\s*사항|혜택|복리\s*후생|근무\s*조건|채용\s*절차)\s*\]?$",
-    re.I,
+SECTION_HEADINGS = {
+    "duties": (
+        "이런 일을 함께해요", "이런 경험을 할 수 있어요", "이런 업무를 함께 할 예정이에요",
+        "이런 업무를 담당해요", "주요 업무", "담당 업무", "수행 업무", "업무 내용", "하실 일", "역할",
+    ),
+    "audience": (
+        "이런 분을 모시고 있어요", "이런 분을 찾고 있어요", "이런 분을 기다립니다",
+        "지원 자격", "자격 요건", "필수 사항", "지원 대상",
+    ),
+    "preferred": (
+        "이런 분이면 더더욱 환영해요", "이런 경험이 있다면 더욱 좋아요", "이번 채용은 이런 분을 우대해요",
+        "우대 사항",
+    ),
+    "benefits": (
+        "혜택", "혜택 및 복지", "복지", "복리후생", "디밀은 이렇게 일해요", "이런 혜택을 드려요",
+        "지원 내용", "참여 혜택", "활동 혜택", "상금", "시상 내역",
+    ),
+    "conditions": ("근무 환경", "근무 조건", "근무 장소", "근무지"),
+    "process": (
+        "채용은 이렇게 진행돼요", "전형 절차 및 일정", "지원 전 꼭 확인해 주세요", "참고 사항",
+        "지원서류", "인재영입 프로세스", "채용 절차",
+    ),
+}
+SECTION_HEADING_VALUES = tuple(
+    heading for headings in SECTION_HEADINGS.values() for heading in headings
 )
+SECTION_TITLE_PATTERN = "|".join(
+    sorted((re.escape(value).replace(r"\ ", r"\s*") for value in SECTION_HEADING_VALUES), key=len, reverse=True)
+)
+SECTION_TITLE_RE = re.compile(rf"^\[?\s*(?:{SECTION_TITLE_PATTERN})\s*\]?$", re.I)
+INLINE_SECTION_RE = re.compile(rf"\[\s*(?:{SECTION_TITLE_PATTERN})\s*\]|(?:{SECTION_TITLE_PATTERN})", re.I)
+DECORATION_ONLY_RE = re.compile(r"^[\sㆍ•·\-–—😉❤❤️♡]+$")
+
+
+def _heading_patterns(kind: str) -> list[str]:
+    return [re.escape(value).replace(r"\ ", r"\s*") for value in SECTION_HEADINGS[kind]]
 TRAILING_NOISE_RE = re.compile(
     r"(?:최신\s*댓글|추천\s*(?:아티클|콘텐츠|공고)|오늘\s*핫한\s*공고|"
     r"함께\s*보면\s*좋은\s*커리어\s*정보|관련\s*공고|카톡\s*(?:채팅방|오픈채팅)|"
@@ -209,6 +240,11 @@ def _walk_blocks(node: Tag) -> tuple[list[ContentBlock], bool]:
         normalized = clean_text(text)
         if kind != "divider" and not normalized:
             return
+        if kind != "divider" and (
+            DECORATION_ONLY_RE.fullmatch(normalized)
+            or re.fullmatch(r"지원하러\s*가기", normalized, re.I)
+        ):
+            return
         block = ContentBlock(kind=kind, text=normalized)  # type: ignore[arg-type]
         # Some Fusion templates render the same post body twice (desktop/mobile).
         # A global fingerprint avoids saving the duplicate copy to Notion.
@@ -234,34 +270,48 @@ def _walk_blocks(node: Tag) -> tuple[list[ContentBlock], bool]:
                 return clean_text(normalized[:midpoint]), True
         return normalized, False
 
-    def add_paragraph_content(text: str) -> None:
+    def split_sections(text: str) -> list[tuple[str, str]]:
+        """Split flattened Fusion text without losing the original ordering."""
+        matches = list(INLINE_SECTION_RE.finditer(text))
+        if not matches:
+            return [("content", text)]
+        parts: list[tuple[str, str]] = []
+        cursor = 0
+        for match in matches:
+            before = clean_text(text[cursor : match.start()])
+            if before:
+                parts.append(("content", before))
+            parts.append(("heading", clean_text(match.group(0)).strip("[] ")))
+            cursor = match.end()
+        after = clean_text(text[cursor:])
+        if after:
+            parts.append(("content", after))
+        return parts
+
+    def add_content(text: str, default_kind: str = "paragraph") -> None:
+        # Only a marker at the start of a line is a bullet; hyphens in dates and
+        # ordinary prose are deliberately left alone.
+        lines = [clean_text(line) for line in text.splitlines() if clean_text(line)]
+        if len(lines) > 1:
+            for line in lines:
+                marker = re.match(r"^\s*[ㆍ•·\-–—]\s+(.*)$", line)
+                add("bulleted_list_item" if marker else default_kind, marker.group(1) if marker else line)
+            return
+        marker = re.match(r"^\s*[ㆍ•·\-–—]\s+(.*)$", text)
+        add("bulleted_list_item" if marker else default_kind, marker.group(1) if marker else text)
+
+    def add_paragraph_content(text: str, default_kind: str = "paragraph") -> None:
         nonlocal repeated_body
         text, repeated = deduplicate_repeated_text(text)
         repeated_body = repeated_body or repeated
         noise = TRAILING_NOISE_RE.search(text)
         if noise:
             text = text[: noise.start()]
-        # Fusion sometimes flattens [section] labels and their contents into one p.
-        pieces = re.split(
-            r"(\[\s*(?:수행\s*업무|담당\s*업무|주요\s*업무|자격\s*요건|지원\s*자격|"
-            r"우대\s*사항|혜택|복리\s*후생|근무\s*조건|채용\s*절차)\s*\])",
-            text,
-            flags=re.I,
-        )
-        for piece in pieces:
-            piece = clean_text(piece)
-            if not piece:
-                continue
-            if SECTION_TITLE_RE.fullmatch(piece):
-                add("heading_3", piece.strip("[] "))
-                continue
-            bullet_parts = [clean_text(value) for value in re.split(r"(?:^|\n)\s*[ㆍ•·]\s*", piece)]
-            bullet_parts = [value for value in bullet_parts if value]
-            if len(bullet_parts) > 1 or re.match(r"^\s*[ㆍ•·]", piece):
-                for value in bullet_parts:
-                    add("bulleted_list_item", value)
+        for kind, piece in split_sections(text):
+            if kind == "heading":
+                add("heading_3", piece)
             else:
-                add("paragraph", piece)
+                add_content(piece, default_kind)
 
     repeated_body = False
 
@@ -289,7 +339,7 @@ def _walk_blocks(node: Tag) -> tuple[list[ContentBlock], bool]:
         if name == "p":
             text = current.get_text("\n", strip=True)
             strong = current.find(["strong", "b"])
-            if strong and clean_text(strong.get_text(" ", strip=True)) == clean_text(text):
+            if strong and clean_text(strong.get_text(" ", strip=True)) == clean_text(text) and SECTION_TITLE_RE.fullmatch(text):
                 add("heading_3", text)
             else:
                 add_paragraph_content(text)
@@ -311,7 +361,7 @@ def _walk_blocks(node: Tag) -> tuple[list[ContentBlock], bool]:
                         text_parts.append(str(child))
                     elif isinstance(child, Tag):
                         text_parts.append(child.get_text(" ", strip=True))
-                add(item_kind, " ".join(text_parts))
+                add_paragraph_content(" ".join(text_parts), item_kind)
                 for nested in li.find_all(["ul", "ol"], recursive=False):
                     walk(nested)
             return
@@ -466,7 +516,14 @@ def extract_experience(title: str, categories: list[str], body_text: str, conten
 def extract_employment_types(title: str, body_text: str, content_type: str) -> list[str]:
     if content_type != "채용공고":
         return []
-    text = f"{title}\n{body_text[:10000]}"
+    # Prefer the title and explicit employment/working-condition lines. This
+    # excludes notices such as "향후 정규직 공고에 지원하더라도".
+    relevant_lines = [
+        line for line in body_text[:10000].splitlines()
+        if re.search(r"고용\s*형태|근무\s*형태|근무\s*조건|채용\s*형태|인턴|아르바이트|알바|계약직|파트\s*타임", line, re.I)
+        and not re.search(r"향후|추후|공고에\s*지원|지원하더라도", line, re.I)
+    ]
+    text = "\n".join([title, *relevant_lines])
     rules = [
         ("정규직", r"정규직"),
         ("계약직", r"계약직"),
@@ -498,7 +555,7 @@ def _extract_section(blocks: list[ContentBlock], heading_patterns: list[str], ma
             continue
         if collecting and block.text:
             if re.match(
-                r"^(?:게시일|등록일|접수\s*기간|지원\s*기간|마감일|근무\s*(?:지|장소|조건))\s*[:：]",
+                r"^(?:게시일|등록일|접수\s*(?:기간|마감)|지원(?:서)?\s*(?:기간|접수\s*마감)|마감일|근무\s*(?:지|장소|조건))\s*[:：]?",
                 block.text,
                 re.I,
             ):
@@ -519,7 +576,7 @@ def extract_target_audience(blocks: list[ContentBlock]) -> str:
 
 def extract_key_duties(blocks: list[ContentBlock], content_type: str) -> str:
     patterns = (
-        [r"주요\s*업무", r"담당\s*업무", r"수행\s*업무", r"업무\s*내용", r"이런\s*일", r"역할", r"하실\s*일", r"담당업무"]
+        _heading_patterns("duties")
         if content_type == "채용공고"
         else [r"활동\s*내용", r"프로그램\s*내용", r"공모\s*주제", r"모집\s*분야", r"주요\s*활동"]
     )
@@ -529,7 +586,7 @@ def extract_key_duties(blocks: list[ContentBlock], content_type: str) -> str:
 def extract_benefits(blocks: list[ContentBlock]) -> str:
     return _extract_section(
         blocks,
-        [r"혜택", r"복리\s*후생", r"상금", r"시상", r"활동비", r"참여\s*혜택", r"지원\s*내용"],
+        _heading_patterns("benefits") + [r"활동비"],
         max_chars=1200,
     )
 
@@ -566,11 +623,11 @@ def _parse_date_token(token: str, reference_year: int) -> str | None:
 
 def extract_deadline(body_text: str, published_date: str | None) -> str | None:
     reference_year = int(published_date[:4]) if published_date else date.today().year
-    candidate_lines = [
-        clean_text(line)
-        for line in body_text.splitlines()
-        if re.search(r"마감|접수\s*기간|지원\s*기간|모집\s*기간|신청\s*기간|접수기간|지원기간", line, re.I)
-    ]
+    lines = [clean_text(line) for line in body_text.splitlines()]
+    candidate_lines = []
+    for index, line in enumerate(lines):
+        if re.search(r"마감|접수\s*기간|지원\s*기간|모집\s*기간|신청\s*기간|접수기간|지원기간", line, re.I):
+            candidate_lines.append(" ".join(lines[index : index + 4]))
     for line in candidate_lines:
         tokens = re.findall(
             r"(?:20\d{2}\s*[년./-]\s*)?\d{1,2}\s*[월./-]\s*\d{1,2}\s*일?",
@@ -643,14 +700,14 @@ def parse_post_html(
     post_id = post_match.group(1)
 
     suspicious_title = title == "제목 미기재" or bool(SECTION_TITLE_RE.fullmatch(title))
+    missing_body = not body_blocks
     missing_job_duties = content_type == "채용공고" and not key_duties
+    image_only_content = had_images and len(body_text) < 300
+    fingerprints = [(block.kind, block.text) for block in body_blocks if block.text]
+    unresolved_repetition = len(fingerprints) != len(set(fingerprints))
     collection_status = (
         "검토 필요"
-        if not body_blocks
-        or repeated_body
-        or suspicious_title
-        or missing_job_duties
-        or (had_images and len(body_text) < 300)
+        if missing_body or suspicious_title or missing_job_duties or image_only_content or unresolved_repetition
         else "정상"
     )
     record = PostRecord(
