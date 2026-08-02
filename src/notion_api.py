@@ -173,7 +173,7 @@ def database_schema() -> dict[str, Any]:
 @dataclass
 class NotionClient:
     token: str
-    api_version: str = "2026-03-11"
+    api_version: str = "2025-09-03"
     min_interval_seconds: float = 0.38
 
     def __post_init__(self) -> None:
@@ -206,8 +206,17 @@ class NotionClient:
                 time.sleep(attempt * 2)
                 continue
             if not response.ok:
+                try:
+                    error = response.json()
+                except ValueError:
+                    error = {}
+                code = error.get("code", "unknown_error")
+                message = error.get("message") or response.text[:1000] or "응답 본문 없음"
+                request_id = error.get("request_id") or response.headers.get("x-request-id", "")
+                request_suffix = f" (request_id={request_id})" if request_id else ""
                 raise RuntimeError(
-                    f"Notion API 오류 {response.status_code} {method} {path}: {response.text[:1000]}"
+                    f"Notion API 오류 HTTP {response.status_code} [{code}] "
+                    f"{method} {path}: {message}{request_suffix}"
                 )
             if not response.content:
                 return {}
@@ -215,8 +224,30 @@ class NotionClient:
         raise RuntimeError(f"Notion API 요청이 반복 실패했습니다: {method} {path}")
 
     def create_database(self, parent_page_id: str, title: str = "Design Opportunities") -> tuple[str, str]:
+        parent_id = extract_notion_id(parent_page_id)
+        parent = self._request("GET", f"/pages/{parent_id}")
+        if parent.get("object") != "page" or parent.get("archived") or parent.get("in_trash"):
+            raise RuntimeError("NOTION_PARENT_PAGE_ID가 사용 가능한 Notion 페이지가 아닙니다.")
+
+        existing = self._request(
+            "POST",
+            "/search",
+            json={"query": title, "filter": {"property": "object", "value": "data_source"}},
+        )
+        for source in existing.get("results", []):
+            source_parent = source.get("parent", {})
+            source_title = "".join(item.get("plain_text", "") for item in source.get("title", []))
+            if source_title == title and source_parent.get("database_id"):
+                database_id = source_parent["database_id"]
+                database = self._request("GET", f"/databases/{database_id}")
+                if database.get("parent", {}).get("page_id") == parent_id:
+                    raise RuntimeError(
+                        "대상 상위 페이지에 Design Opportunities 데이터베이스가 이미 있습니다. "
+                        f"NOTION_DATABASE_ID={database_id}, NOTION_DATA_SOURCE_ID={source['id']}"
+                    )
+
         payload = {
-            "parent": {"type": "page_id", "page_id": extract_notion_id(parent_page_id)},
+            "parent": {"type": "page_id", "page_id": parent_id},
             "title": [{"type": "text", "text": {"content": title}}],
             "description": [
                 {
