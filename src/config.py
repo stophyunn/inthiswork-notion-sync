@@ -50,7 +50,7 @@ class Settings:
             notion_token=os.getenv("NOTION_TOKEN", "").strip(),
             notion_parent_page_id=os.getenv("NOTION_PARENT_PAGE_ID", "").strip(),
             notion_data_source_id=os.getenv("NOTION_DATA_SOURCE_ID", "").strip(),
-            notion_api_version=os.getenv("NOTION_API_VERSION", "2026-03-11").strip(),
+            notion_api_version=os.getenv("NOTION_API_VERSION", "2025-09-03").strip(),
             design_url=os.getenv("INTHISWORK_DESIGN_URL", "https://inthiswork.com/design").strip(),
             sync_mode=os.getenv("SYNC_MODE", "recent").strip().lower(),
             recent_list_pages=_int("RECENT_LIST_PAGES", 3),

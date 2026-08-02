@@ -39,22 +39,45 @@ jobs:
       - name: Run tests
         run: pytest -q
 
-      - name: Create Notion database
+      - name: Validate required secrets
+        shell: bash
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_PARENT_PAGE_ID: ${{ secrets.NOTION_PARENT_PAGE_ID }}
-          NOTION_API_VERSION: "2026-03-11"
-          BOOTSTRAP_CONFIRM: ${{ inputs.confirm }}
         run: |
-          python -m src.bootstrap | tee bootstrap-output.txt
+          missing=()
+          [[ -n "$NOTION_TOKEN" ]] || missing+=(NOTION_TOKEN)
+          [[ -n "$NOTION_PARENT_PAGE_ID" ]] || missing+=(NOTION_PARENT_PAGE_ID)
+          if (( ${#missing[@]} )); then
+            printf '::error::필수 GitHub Actions Secret이 없습니다: %s\n' "${missing[*]}"
+            exit 1
+          fi
+          echo "필수 Secret 이름과 설정 여부를 확인했습니다(값은 출력하지 않음)."
+
+      - name: Create Notion database
+        id: bootstrap
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_PARENT_PAGE_ID: ${{ secrets.NOTION_PARENT_PAGE_ID }}
+          NOTION_API_VERSION: "2025-09-03"
+          BOOTSTRAP_CONFIRM: ${{ inputs.confirm }}
+        shell: bash
+        run: |
+          set -o pipefail
+          set +e
+          python -u -m src.bootstrap 2>&1 | tee bootstrap-output.txt
+          bootstrap_status=${PIPESTATUS[0]}
+          set -e
           {
             echo "## Notion 데이터베이스 생성 결과"
             echo '```text'
             cat bootstrap-output.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          exit "$bootstrap_status"
 
       - name: Upload bootstrap output
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: bootstrap-output
