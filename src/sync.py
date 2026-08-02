@@ -55,31 +55,58 @@ def main() -> None:
     for index, url in enumerate(urls, start=1):
         post_id = url.rstrip("/").split("/")[-1]
         LOGGER.info("[%s/%s] %s", index, len(urls), url)
-        existing = None
+        existing_for_missing = None
         try:
             if notion is not None:
-                existing = notion.query_by_post_id(settings.notion_data_source_id, post_id)
-            record = scraper.fetch_post(url)
+                existing_for_missing = notion.query_by_post_id(
+                    settings.notion_data_source_id, post_id
+                )
+            records = scraper.fetch_posts(url)
+            for record in records:
+                existing = None
+                if notion is not None:
+                    existing = (
+                        existing_for_missing
+                        if record.post_id == post_id
+                        else notion.query_by_post_id(
+                            settings.notion_data_source_id, record.post_id
+                        )
+                    )
 
-            if settings.dry_run:
-                preview = asdict(record)
-                preview["body_blocks"] = [asdict(block) for block in record.body_blocks[:8]]
-                print(json.dumps(preview, ensure_ascii=False, indent=2))
-                counters["skipped"] += 1
-                continue
+                quality_issues: list[str] = []
+                if not record.body_blocks:
+                    quality_issues.append("본문 블록 없음")
+                if record.content_type == "기타·확인 필요":
+                    quality_issues.append("콘텐츠 유형 미분류")
+                if record.content_type == "채용공고" and not record.employment_types:
+                    quality_issues.append("고용형태 누락")
+                if quality_issues:
+                    LOGGER.warning(
+                        "파싱 품질 검토 필요 (%s, ID=%s): %s",
+                        url,
+                        record.post_id,
+                        ", ".join(quality_issues),
+                    )
 
-            assert notion is not None
-            if existing is None:
-                notion.create_record(settings.notion_data_source_id, record)
-                counters["created"] += 1
-            else:
-                changed = notion.existing_hash(existing) != record.content_hash
-                notion.update_record(existing, record, changed=changed)
-                counters["updated" if changed else "unchanged"] += 1
+                if settings.dry_run:
+                    preview = asdict(record)
+                    preview["body_blocks"] = [asdict(block) for block in record.body_blocks[:8]]
+                    print(json.dumps(preview, ensure_ascii=False, indent=2))
+                    counters["skipped"] += 1
+                    continue
+
+                assert notion is not None
+                if existing is None:
+                    notion.create_record(settings.notion_data_source_id, record)
+                    counters["created"] += 1
+                else:
+                    changed = notion.existing_hash(existing) != record.content_hash
+                    notion.update_record(existing, record, changed=changed)
+                    counters["updated" if changed else "unchanged"] += 1
         except SiteNotFoundError:
             LOGGER.warning("원문이 사라졌거나 404입니다: %s", url)
-            if notion is not None and existing is not None:
-                notion.mark_inaccessible(existing)
+            if notion is not None and existing_for_missing is not None:
+                notion.mark_inaccessible(existing_for_missing)
                 counters["updated"] += 1
             else:
                 counters["skipped"] += 1

@@ -7,7 +7,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 from bs4 import BeautifulSoup
 
 from .http_client import PoliteHttpClient, SiteNotFoundError
-from .parser import parse_post_html
+from .parser import CATEGORY_WHITELIST, clean_text, parse_post_html_records
 from .models import PostRecord
 
 LOGGER = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ class InThisWorkScraper:
     def __init__(self, client: PoliteHttpClient, design_url: str) -> None:
         self.client = client
         self.design_url = design_url.rstrip("/")
+        self._listing_categories: dict[str, list[str]] = {}
 
     def _extract_post_urls(self, html: str, page_url: str) -> list[str]:
         soup = BeautifulSoup(html, "html.parser")
@@ -41,6 +42,18 @@ class InThisWorkScraper:
             normalized = normalize_post_url(str(anchor["href"]), page_url)
             if normalized and normalized not in urls:
                 urls.append(normalized)
+            if normalized:
+                container = anchor.find_parent(["article", "li", "div"])
+                if container:
+                    category_values: list[str] = []
+                    for category_anchor in container.select(
+                        "a[rel~='category'], a[href*='/category/'], a[href*='/tag/']"
+                    ):
+                        value = clean_text(category_anchor.get_text(" ", strip=True))
+                        if value in CATEGORY_WHITELIST and value not in category_values:
+                            category_values.append(value)
+                    if category_values:
+                        self._listing_categories[normalized] = category_values
         return urls
 
     def _next_page_url(self, html: str, current_url: str, page_number: int) -> str | None:
@@ -81,5 +94,10 @@ class InThisWorkScraper:
         return collected
 
     def fetch_post(self, url: str) -> PostRecord:
+        return self.fetch_posts(url)[0]
+
+    def fetch_posts(self, url: str) -> list[PostRecord]:
         response = self.client.get(url)
-        return parse_post_html(response.text, url)
+        return parse_post_html_records(
+            response.text, url, self._listing_categories.get(url, [])
+        )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from copy import deepcopy
 from datetime import date, datetime
 from html import unescape
 from typing import Iterable
@@ -121,11 +122,20 @@ def extract_categories(soup: BeautifulSoup) -> list[str]:
     section = _meta_content(soup, "article:section")
     if section in CATEGORY_WHITELIST and section not in categories:
         categories.append(section)
+    for anchor in soup.select(
+        ".fusion-meta-tb-categories a, .fusion-post-cards-meta-tb a, "
+        ".fusion-post-meta a, a[href*='/category/'], a[href*='/tag/']"
+    ):
+        text = clean_text(anchor.get_text(" ", strip=True))
+        if text in CATEGORY_WHITELIST and text not in categories:
+            categories.append(text)
     return categories
 
 
 def find_content_root(soup: BeautifulSoup) -> Tag:
     selectors = [
+        ".fusion-content-tb",
+        ".fusion-post-content-wrapper .post-content",
         "article .post-content",
         "article .entry-content",
         "article .fusion-post-content",
@@ -135,10 +145,27 @@ def find_content_root(soup: BeautifulSoup) -> Tag:
         "article",
         "main",
     ]
+    candidates: list[Tag] = []
     for selector in selectors:
-        node = soup.select_one(selector)
-        if isinstance(node, Tag):
-            return node
+        for node in soup.select(selector):
+            if isinstance(node, Tag) and node not in candidates:
+                candidates.append(node)
+    # Fusion layouts can contain an early, empty post-content placeholder followed
+    # by the rendered template body. Prefer the candidate with the most useful
+    # structural blocks and text rather than trusting selector order.
+    def score(node: Tag) -> tuple[int, int, int]:
+        structural = node.select("h1,h2,h3,h4,h5,h6,p,li,tr")
+        useful = [clean_text(item.get_text(" ", strip=True)) for item in structural]
+        useful = [text for text in useful if text]
+        return len(set(useful)), sum(len(text) for text in set(useful)), len(useful)
+
+    if candidates:
+        specific = [
+            node
+            for node in candidates
+            if node.name not in {"article", "main", "body"} and score(node)[0] > 0
+        ]
+        return max(specific or candidates, key=score)
     return soup.body or soup
 
 
@@ -160,9 +187,16 @@ def _walk_blocks(node: Tag) -> list[ContentBlock]:
         if kind != "divider" and not normalized:
             return
         block = ContentBlock(kind=kind, text=normalized)  # type: ignore[arg-type]
-        if blocks and blocks[-1] == block:
+        # Some Fusion templates render the same post body twice (desktop/mobile).
+        # A global fingerprint avoids saving the duplicate copy to Notion.
+        fingerprint = (block.kind, block.text)
+        if not block.kind.startswith("heading") and fingerprint in seen:
             return
+        if not block.kind.startswith("heading"):
+            seen.add(fingerprint)
         blocks.append(block)
+
+    seen: set[tuple[str, str]] = set()
 
     def walk(current: Tag | NavigableString) -> None:
         if isinstance(current, NavigableString):
@@ -175,7 +209,12 @@ def _walk_blocks(node: Tag) -> list[ContentBlock]:
             add("heading_3", current.get_text(" ", strip=True))
             return
         if name == "p":
-            add("paragraph", current.get_text("\n", strip=True))
+            text = current.get_text("\n", strip=True)
+            strong = current.find(["strong", "b"])
+            if strong and clean_text(strong.get_text(" ", strip=True)) == clean_text(text):
+                add("heading_3", text)
+            else:
+                add("paragraph", text)
             return
         if name == "blockquote":
             add("quote", current.get_text("\n", strip=True))
@@ -266,11 +305,13 @@ def classify_content(title: str, categories: list[str], body_text: str) -> str:
     has_job_sections = bool(
         re.search(r"주요\s*업무|자격\s*요건|지원\s*자격|채용\s*절차|근무\s*조건", combined)
     )
-    has_job_title = bool(re.search(r"채용|인턴|신입|경력|디자이너|designer", title, re.I))
+    has_job_title = bool(
+        re.search(r"채용|인턴|신입|경력|디자이너|designer|아르바이트|알바|정규직|계약직", title, re.I)
+    )
     editorial_signal = bool(
         re.search(r"인터뷰|포트폴리오|취업토크|커리어|노하우|필요한가\??|하는 법", title)
     )
-    if has_job_category or (has_job_sections and has_job_title):
+    if has_job_category or has_job_title or (has_job_sections and has_job_title):
         return "채용공고"
     if editorial_signal or any(cat in categories for cat in ["커리어TV", "취업토크"]):
         return "커리어 콘텐츠"
@@ -346,9 +387,8 @@ def extract_employment_types(title: str, body_text: str, content_type: str) -> l
     rules = [
         ("정규직", r"정규직"),
         ("계약직", r"계약직"),
-        ("체험형 인턴", r"체험형\s*인턴"),
+        ("인턴", r"체험형\s*인턴|(?<!전환형\s)인턴"),
         ("전환형 인턴", r"전환형\s*인턴|채용\s*연계형\s*인턴"),
-        ("인턴", r"(?<!체험형\s)(?<!전환형\s)인턴"),
         ("프리랜서", r"프리랜서"),
         ("아르바이트", r"아르바이트|알바"),
         ("파트타임", r"파트\s*타임|part[- ]?time"),
@@ -357,7 +397,7 @@ def extract_employment_types(title: str, body_text: str, content_type: str) -> l
     for name, pattern in rules:
         if re.search(pattern, text, re.I) and name not in values:
             values.append(name)
-    if "체험형 인턴" in values or "전환형 인턴" in values:
+    if "전환형 인턴" in values:
         values = [v for v in values if v != "인턴"]
     return values
 
@@ -383,14 +423,14 @@ def _extract_section(blocks: list[ContentBlock], heading_patterns: list[str], ma
 def extract_target_audience(blocks: list[ContentBlock]) -> str:
     return _extract_section(
         blocks,
-        [r"자격\s*요건", r"지원\s*자격", r"지원\s*대상", r"이런\s*분"],
+        [r"자격\s*요건", r"지원\s*자격", r"지원\s*대상", r"이런\s*분", r"필수\s*사항", r"지원자격"],
         max_chars=1200,
     )
 
 
 def extract_key_duties(blocks: list[ContentBlock], content_type: str) -> str:
     patterns = (
-        [r"주요\s*업무", r"담당\s*업무", r"업무\s*내용", r"이런\s*일", r"역할"]
+        [r"주요\s*업무", r"담당\s*업무", r"업무\s*내용", r"이런\s*일", r"역할", r"하실\s*일", r"담당업무"]
         if content_type == "채용공고"
         else [r"활동\s*내용", r"프로그램\s*내용", r"공모\s*주제", r"모집\s*분야", r"주요\s*활동"]
     )
@@ -411,7 +451,7 @@ def _line_value(body_text: str, labels: str, max_chars: int = 500) -> str:
 
 
 def extract_location(body_text: str) -> str:
-    return _line_value(body_text, r"근무지|근무\s*장소|활동\s*지역|근무\s*지역", 250)
+    return _line_value(body_text, r"근무지|근무\s*장소|활동\s*지역|근무\s*지역|근무장소|근무주소", 250)
 
 
 def extract_activity_period(body_text: str) -> str:
@@ -440,7 +480,7 @@ def extract_deadline(body_text: str, published_date: str | None) -> str | None:
     candidate_lines = [
         clean_text(line)
         for line in body_text.splitlines()
-        if re.search(r"마감|접수\s*기간|지원\s*기간|모집\s*기간|신청\s*기간", line, re.I)
+        if re.search(r"마감|접수\s*기간|지원\s*기간|모집\s*기간|신청\s*기간|접수기간|지원기간", line, re.I)
     ]
     for line in candidate_lines:
         tokens = re.findall(
@@ -482,10 +522,12 @@ def compute_hash(record_data: dict[str, object]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def parse_post_html(html: str, source_url: str) -> PostRecord:
+def parse_post_html(
+    html: str, source_url: str, fallback_categories: list[str] | None = None
+) -> PostRecord:
     soup = BeautifulSoup(html, "html.parser")
     title = extract_title(soup)
-    categories = extract_categories(soup)
+    categories = extract_categories(soup) or list(fallback_categories or [])
     published_date = extract_published_date(soup)
     apply_url = extract_apply_url(soup, source_url)
     body_blocks, had_images = extract_body_blocks(soup)
@@ -509,7 +551,7 @@ def parse_post_html(html: str, source_url: str) -> PostRecord:
         raise ValueError(f"인디스워크 공고 ID를 URL에서 찾을 수 없습니다: {source_url}")
     post_id = post_match.group(1)
 
-    collection_status = "검토 필요" if had_images and len(body_text) < 300 else "정상"
+    collection_status = "검토 필요" if not body_blocks or (had_images and len(body_text) < 300) else "정상"
     record = PostRecord(
         post_id=post_id,
         source_url=source_url,
@@ -558,3 +600,51 @@ def parse_post_html(html: str, source_url: str) -> PostRecord:
         }
     )
     return record
+
+
+def parse_post_html_records(
+    html: str, source_url: str, fallback_categories: list[str] | None = None
+) -> list[PostRecord]:
+    """Parse a page, splitting clearly separated design roles into stable records."""
+    record = parse_post_html(html, source_url, fallback_categories)
+    role_markers = [
+        index
+        for index, block in enumerate(record.body_blocks)
+        if block.kind.startswith("heading")
+        and re.search(
+            r"디자이너|디자인\s*(?:직무|부문|인턴)|UI\s*/?\s*UX|그래픽|BX|브랜드|일러스트",
+            block.text,
+            re.I,
+        )
+        and detect_design_fields(block.text, "")
+    ]
+    if len(role_markers) < 2:
+        return [record]
+
+    records: list[PostRecord] = []
+    for sequence, start in enumerate(role_markers, start=1):
+        end = role_markers[sequence] if sequence < len(role_markers) else len(record.body_blocks)
+        blocks = record.body_blocks[start:end]
+        segment_text = _all_text(blocks)
+        role_title = blocks[0].text
+        split_record = deepcopy(record)
+        split_record.post_id = f"{record.post_id}-{sequence}"
+        split_record.title = f"{record.title}｜{role_title}"
+        split_record.role_or_program = role_title
+        split_record.body_blocks = blocks
+        split_record.design_fields = detect_design_fields(role_title, segment_text)
+        split_record.key_duties = extract_key_duties(blocks, "채용공고")
+        split_record.target_audience = extract_target_audience(blocks)
+        segment_employment = extract_employment_types(role_title, segment_text, "채용공고")
+        if segment_employment:
+            split_record.employment_types = segment_employment
+        split_record.content_hash = compute_hash(
+            {
+                "post_id": split_record.post_id,
+                "title": split_record.title,
+                "body_blocks": [(block.kind, block.text) for block in blocks],
+                "design_fields": split_record.design_fields,
+            }
+        )
+        records.append(split_record)
+    return records
