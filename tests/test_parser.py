@@ -133,3 +133,32 @@ def test_regression_379384_splits_multiple_design_roles():
     assert records[1].design_fields == ["그래픽"]
     assert "카메라 서비스 UI/UX 디자인" in records[0].key_duties
     assert "서비스 그래픽 에셋 제작" in records[1].key_duties
+
+
+def test_tinkware_live_shape_prefers_metadata_and_splits_flat_sections():
+    record = parse_post_html(
+        _fixture("tinkware_live"), "https://inthiswork.com/archives/400001"
+    )
+
+    assert record.title == "팅크웨어｜UX/UI 디자이너 채용"
+    assert "UX/UI 화면 기획 및 디자인" in record.key_duties
+    assert "관련 직무 경험자" in record.target_audience
+    assert all("오늘 핫한 공고" not in block.text for block in record.body_blocks)
+    assert sum("UX/UI 화면 기획 및 디자인" in block.text for block in record.body_blocks) == 1
+    assert any(block.kind == "bulleted_list_item" for block in record.body_blocks)
+    assert record.collection_status == "검토 필요"
+
+
+def test_dmil_live_shape_ignores_publish_year_and_non_duty_design_terms():
+    record = parse_post_html(
+        _fixture("dmil_live"), "https://inthiswork.com/archives/400002"
+    )
+
+    assert record.title == "DMIL｜콘텐츠 디자이너 채용"
+    assert record.experience_raw == ""
+    assert record.experience_class == "확인 필요"
+    assert "SNS 콘텐츠 및 광고 소재 디자인" in record.key_duties
+    assert "포트폴리오 제출 가능자" in record.target_audience
+    assert record.benefits_prize == "장비 지원"
+    assert record.design_fields == ["콘텐츠"]
+    assert all("함께 보면 좋은" not in block.text for block in record.body_blocks)

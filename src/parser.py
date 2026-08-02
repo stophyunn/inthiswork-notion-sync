@@ -52,7 +52,24 @@ NOISE_SELECTORS = [
     ".fusion-post-title-meta-wrap",
     ".yarpp-related",
     ".adsbygoogle",
+    ".fusion-comments-tb",
+    ".fusion-related-posts",
+    ".fusion-post-cards",
+    ".related-posts-wrapper",
+    ".recent-comments",
 ]
+
+SECTION_TITLE_RE = re.compile(
+    r"^\[?\s*(?:수행\s*업무|담당\s*업무|주요\s*업무|자격\s*요건|지원\s*자격|"
+    r"우대\s*사항|혜택|복리\s*후생|근무\s*조건|채용\s*절차)\s*\]?$",
+    re.I,
+)
+TRAILING_NOISE_RE = re.compile(
+    r"(?:최신\s*댓글|추천\s*(?:아티클|콘텐츠|공고)|오늘\s*핫한\s*공고|"
+    r"함께\s*보면\s*좋은\s*커리어\s*정보|관련\s*공고|카톡\s*(?:채팅방|오픈채팅)|"
+    r"공유\s*(?:안내|하기)|댓글\s*(?:남기기|목록))",
+    re.I,
+)
 
 
 def clean_text(value: str) -> str:
@@ -77,6 +94,11 @@ def _meta_content(soup: BeautifulSoup, *keys: str) -> str:
 
 
 def extract_title(soup: BeautifulSoup) -> str:
+    for key in ("og:title", "twitter:title"):
+        meta_title = _meta_content(soup, key)
+        meta_title = re.sub(r"\s*[–|-]\s*IN THIS WORK\s*$", "", meta_title, flags=re.I)
+        if meta_title and not SECTION_TITLE_RE.fullmatch(meta_title):
+            return meta_title
     selectors = [
         "h1.entry-title",
         "h1.fusion-post-title",
@@ -89,11 +111,12 @@ def extract_title(soup: BeautifulSoup) -> str:
         tag = soup.select_one(selector)
         if tag:
             text = clean_text(tag.get_text(" ", strip=True))
-            if text:
+            if text and not SECTION_TITLE_RE.fullmatch(text):
                 return text
-    og = _meta_content(soup, "og:title", "twitter:title")
-    if og:
-        return re.sub(r"\s*[–|-]\s*IN THIS WORK\s*$", "", og, flags=re.I)
+    document_title = clean_text(soup.title.get_text(" ", strip=True)) if soup.title else ""
+    document_title = re.sub(r"\s*[–|-]\s*IN THIS WORK\s*$", "", document_title, flags=re.I)
+    if document_title and not SECTION_TITLE_RE.fullmatch(document_title):
+        return document_title
     return "제목 미기재"
 
 
@@ -179,7 +202,7 @@ def _table_text(table: Tag) -> list[str]:
     return rows
 
 
-def _walk_blocks(node: Tag) -> list[ContentBlock]:
+def _walk_blocks(node: Tag) -> tuple[list[ContentBlock], bool]:
     blocks: list[ContentBlock] = []
 
     def add(kind: str, text: str = "") -> None:
@@ -197,16 +220,71 @@ def _walk_blocks(node: Tag) -> list[ContentBlock]:
         blocks.append(block)
 
     seen: set[tuple[str, str]] = set()
+    stopped = False
+
+    def deduplicate_repeated_text(text: str) -> tuple[str, bool]:
+        normalized = clean_text(text)
+        lines = [line for line in normalized.splitlines() if line.strip()]
+        if len(lines) >= 2 and len(lines) % 2 == 0:
+            half = len(lines) // 2
+            if lines[:half] == lines[half:]:
+                return "\n".join(lines[:half]), True
+        for midpoint in range(len(normalized) // 2 - 3, len(normalized) // 2 + 4):
+            if midpoint > 0 and clean_text(normalized[:midpoint]) == clean_text(normalized[midpoint:]):
+                return clean_text(normalized[:midpoint]), True
+        return normalized, False
+
+    def add_paragraph_content(text: str) -> None:
+        nonlocal repeated_body
+        text, repeated = deduplicate_repeated_text(text)
+        repeated_body = repeated_body or repeated
+        noise = TRAILING_NOISE_RE.search(text)
+        if noise:
+            text = text[: noise.start()]
+        # Fusion sometimes flattens [section] labels and their contents into one p.
+        pieces = re.split(
+            r"(\[\s*(?:수행\s*업무|담당\s*업무|주요\s*업무|자격\s*요건|지원\s*자격|"
+            r"우대\s*사항|혜택|복리\s*후생|근무\s*조건|채용\s*절차)\s*\])",
+            text,
+            flags=re.I,
+        )
+        for piece in pieces:
+            piece = clean_text(piece)
+            if not piece:
+                continue
+            if SECTION_TITLE_RE.fullmatch(piece):
+                add("heading_3", piece.strip("[] "))
+                continue
+            bullet_parts = [clean_text(value) for value in re.split(r"(?:^|\n)\s*[ㆍ•·]\s*", piece)]
+            bullet_parts = [value for value in bullet_parts if value]
+            if len(bullet_parts) > 1 or re.match(r"^\s*[ㆍ•·]", piece):
+                for value in bullet_parts:
+                    add("bulleted_list_item", value)
+            else:
+                add("paragraph", piece)
+
+    repeated_body = False
 
     def walk(current: Tag | NavigableString) -> None:
+        nonlocal stopped
+        if stopped:
+            return
         if isinstance(current, NavigableString):
             return
         name = current.name.lower() if current.name else ""
         if name in {"h1", "h2"}:
-            add("heading_2", current.get_text(" ", strip=True))
+            text = clean_text(current.get_text(" ", strip=True))
+            if TRAILING_NOISE_RE.search(text):
+                stopped = True
+                return
+            add("heading_2", text)
             return
         if name in {"h3", "h4", "h5", "h6"}:
-            add("heading_3", current.get_text(" ", strip=True))
+            text = clean_text(current.get_text(" ", strip=True))
+            if TRAILING_NOISE_RE.search(text):
+                stopped = True
+                return
+            add("heading_3", text)
             return
         if name == "p":
             text = current.get_text("\n", strip=True)
@@ -214,7 +292,7 @@ def _walk_blocks(node: Tag) -> list[ContentBlock]:
             if strong and clean_text(strong.get_text(" ", strip=True)) == clean_text(text):
                 add("heading_3", text)
             else:
-                add("paragraph", text)
+                add_paragraph_content(text)
             return
         if name == "blockquote":
             add("quote", current.get_text("\n", strip=True))
@@ -248,23 +326,23 @@ def _walk_blocks(node: Tag) -> list[ContentBlock]:
                 walk(child)
 
     walk(node)
-    return blocks
+    return blocks, repeated_body
 
 
-def extract_body_blocks(soup: BeautifulSoup) -> tuple[list[ContentBlock], bool]:
+def extract_body_blocks(soup: BeautifulSoup) -> tuple[list[ContentBlock], bool, bool]:
     root = find_content_root(soup)
     for selector in NOISE_SELECTORS:
         for node in root.select(selector):
             node.decompose()
     had_images = bool(root.find("img"))
-    blocks = _walk_blocks(root)
+    blocks, repeated_body = _walk_blocks(root)
 
     # Remove page-title duplication when it appears as the first content heading.
     if blocks and blocks[0].kind.startswith("heading"):
         title = extract_title(soup)
         if clean_text(blocks[0].text) == clean_text(title):
             blocks = blocks[1:]
-    return blocks, had_images
+    return blocks, had_images, repeated_body
 
 
 def extract_apply_url(soup: BeautifulSoup, source_url: str) -> str | None:
@@ -368,7 +446,12 @@ def extract_experience(title: str, categories: list[str], body_text: str, conten
     if re.search(r"경력\s*무관|신입\s*[·/&및]+\s*경력", text):
         match = re.search(r"경력\s*무관|신입\s*[·/&및]+\s*경력", text)
         return "경력무관", clean_text(match.group(0) if match else "경력무관")
-    years = re.search(r"(?:경력\s*)?(\d+)\s*년\s*(?:이상|이하|~\s*\d+\s*년)?", text)
+    years = re.search(
+        r"(?:경력|실무\s*경험|관련\s*경험)\s*[:：]?\s*(\d+)\s*년"
+        r"(?:\s*(?:이상|이하|~\s*\d+\s*년))?"
+        r"|(?<!\d)(\d{1,2})\s*년\s*(?:이상|이하)\s*(?:경력|경험)?",
+        text,
+    )
     if years:
         return "경력", clean_text(years.group(0))
     if re.search(r"인턴", title) or "신입/인턴" in categories and re.search(r"인턴", text):
@@ -414,6 +497,12 @@ def _extract_section(blocks: list[ContentBlock], heading_patterns: list[str], ma
                 collecting = True
             continue
         if collecting and block.text:
+            if re.match(
+                r"^(?:게시일|등록일|접수\s*기간|지원\s*기간|마감일|근무\s*(?:지|장소|조건))\s*[:：]",
+                block.text,
+                re.I,
+            ):
+                break
             output.append(block.text)
             if sum(len(x) for x in output) >= max_chars:
                 break
@@ -430,7 +519,7 @@ def extract_target_audience(blocks: list[ContentBlock]) -> str:
 
 def extract_key_duties(blocks: list[ContentBlock], content_type: str) -> str:
     patterns = (
-        [r"주요\s*업무", r"담당\s*업무", r"업무\s*내용", r"이런\s*일", r"역할", r"하실\s*일", r"담당업무"]
+        [r"주요\s*업무", r"담당\s*업무", r"수행\s*업무", r"업무\s*내용", r"이런\s*일", r"역할", r"하실\s*일", r"담당업무"]
         if content_type == "채용공고"
         else [r"활동\s*내용", r"프로그램\s*내용", r"공모\s*주제", r"모집\s*분야", r"주요\s*활동"]
     )
@@ -440,7 +529,7 @@ def extract_key_duties(blocks: list[ContentBlock], content_type: str) -> str:
 def extract_benefits(blocks: list[ContentBlock]) -> str:
     return _extract_section(
         blocks,
-        [r"혜택", r"상금", r"시상", r"활동비", r"참여\s*혜택", r"지원\s*내용"],
+        [r"혜택", r"복리\s*후생", r"상금", r"시상", r"활동비", r"참여\s*혜택", r"지원\s*내용"],
         max_chars=1200,
     )
 
@@ -530,17 +619,19 @@ def parse_post_html(
     categories = extract_categories(soup) or list(fallback_categories or [])
     published_date = extract_published_date(soup)
     apply_url = extract_apply_url(soup, source_url)
-    body_blocks, had_images = extract_body_blocks(soup)
+    body_blocks, had_images, repeated_body = extract_body_blocks(soup)
     body_text = _all_text(body_blocks)
     content_type = classify_content(title, categories, body_text)
     organization, role = split_title(title, content_type, body_text)
-    design_fields = detect_design_fields(title, body_text)
     experience_class, experience_raw = extract_experience(
         title, categories, body_text, content_type
     )
     employment_types = extract_employment_types(title, body_text, content_type)
     target_audience = extract_target_audience(body_blocks)
     key_duties = extract_key_duties(body_blocks, content_type)
+    # Avoid false positives from company introductions, benefits, and related
+    # content: role/title and the actual duties are the authoritative signals.
+    design_fields = detect_design_fields(title, key_duties)
     benefits = extract_benefits(body_blocks)
     location = extract_location(body_text)
     activity_period = extract_activity_period(body_text)
@@ -551,7 +642,17 @@ def parse_post_html(
         raise ValueError(f"인디스워크 공고 ID를 URL에서 찾을 수 없습니다: {source_url}")
     post_id = post_match.group(1)
 
-    collection_status = "검토 필요" if not body_blocks or (had_images and len(body_text) < 300) else "정상"
+    suspicious_title = title == "제목 미기재" or bool(SECTION_TITLE_RE.fullmatch(title))
+    missing_job_duties = content_type == "채용공고" and not key_duties
+    collection_status = (
+        "검토 필요"
+        if not body_blocks
+        or repeated_body
+        or suspicious_title
+        or missing_job_duties
+        or (had_images and len(body_text) < 300)
+        else "정상"
+    )
     record = PostRecord(
         post_id=post_id,
         source_url=source_url,
