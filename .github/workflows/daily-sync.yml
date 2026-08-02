@@ -1,0 +1,80 @@
+name: InThisWork Design Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "recent는 최신 목록, full은 접근 가능한 전체 목록을 순회합니다"
+        required: true
+        default: recent
+        type: choice
+        options:
+          - recent
+          - full
+      dry_run:
+        description: "Notion에 쓰지 않고 추출 결과만 확인"
+        required: true
+        default: true
+        type: boolean
+      max_list_pages:
+        description: "비워 두면 기본값 사용. 테스트는 1 권장, full 전체는 0"
+        required: false
+        default: ""
+        type: string
+      max_posts:
+        description: "비워 두면 제한 없음. 첫 테스트는 3 권장"
+        required: false
+        default: ""
+        type: string
+  schedule:
+    - cron: "10 9 * * *"
+      timezone: "Asia/Seoul"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: inthiswork-design-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Sync posts
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATA_SOURCE_ID: ${{ vars.NOTION_DATA_SOURCE_ID }}
+          NOTION_API_VERSION: "2026-03-11"
+          INTHISWORK_DESIGN_URL: "https://inthiswork.com/design"
+          SYNC_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'recent' }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+          MAX_LIST_PAGES: ${{ github.event_name == 'workflow_dispatch' && inputs.max_list_pages || '' }}
+          MAX_POSTS_PER_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.max_posts || '0' }}
+          RECENT_LIST_PAGES: "3"
+          FULL_LIST_PAGES: "0"
+          RECHECK_OPEN_LIMIT: "20"
+          INTHISWORK_REQUEST_DELAY_SECONDS: "2.5"
+          REQUEST_TIMEOUT_SECONDS: "25"
+        run: |
+          python -m src.sync | tee sync-output.txt
+          {
+            echo "## 동기화 실행 결과"
+            echo '```text'
+            tail -n 80 sync-output.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
