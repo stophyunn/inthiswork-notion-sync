@@ -1,0 +1,14 @@
+1) ZIP 압축을 풉니다.
+2) GitHub 비공개 저장소에 폴더 안의 파일 전체를 업로드합니다.
+3) Actions → Bootstrap Notion Database → Run workflow
+4) confirm에 CREATE 입력 후 실행합니다. (최초 1회만)
+5) 실행 Summary에서 NOTION_DATA_SOURCE_ID를 복사합니다.
+6) Settings → Secrets and variables → Actions → Variables에
+   NOTION_DATA_SOURCE_ID 이름으로 등록합니다.
+7) Actions → InThisWork Design Sync에서 첫 테스트:
+   mode=recent / dry_run=true / max_list_pages=1 / max_posts=3
+8) 결과가 괜찮으면 dry_run=false로 3개를 Notion에 실제 등록합니다.
+9) 전체 최초 수집:
+   mode=full / dry_run=false / max_list_pages=0 / max_posts=0
+
+자세한 내용과 오류 해결은 README.md를 확인하세요.
