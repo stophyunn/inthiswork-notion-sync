@@ -1,0 +1,62 @@
+name: Bootstrap Notion Database
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "데이터베이스를 새로 만들려면 CREATE를 입력하세요"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notion-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check confirmation
+        run: |
+          if [ "${{ inputs.confirm }}" != "CREATE" ]; then
+            echo "confirm 입력값이 CREATE가 아닙니다."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Create Notion database
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_PARENT_PAGE_ID: ${{ secrets.NOTION_PARENT_PAGE_ID }}
+          NOTION_API_VERSION: "2026-03-11"
+          BOOTSTRAP_CONFIRM: ${{ inputs.confirm }}
+        run: |
+          python -m src.bootstrap | tee bootstrap-output.txt
+          {
+            echo "## Notion 데이터베이스 생성 결과"
+            echo '```text'
+            cat bootstrap-output.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bootstrap output
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrap-output
+          path: bootstrap-output.txt
+          retention-days: 7
