@@ -61,32 +61,38 @@ NOISE_SELECTORS = [
 
 SECTION_HEADINGS = {
     "duties": (
+        "이런 일을 해요",
         "이런 일을 함께해요", "이런 경험을 할 수 있어요", "이런 업무를 함께 할 예정이에요",
         "이런 업무를 담당해요", "합류하면 함께 할 업무예요", "합류하면 함께할 업무예요",
-        "주요 업무", "담당 업무", "수행 업무", "업무 내용", "하실 일", "역할",
+        "주요 업무", "주요업무 및 역할", "담당 업무", "담당하실 업무", "수행 업무", "업무 내용",
+        "하실 일", "역할",
         "Responsibilities", "What you'll do", "What you will do", "Your role",
     ),
     "audience": (
-        "이런 분을 모시고 있어요", "이런 분을 찾고 있어요", "이런 분을 기다립니다",
+        "이런 분을 모시고 있어요", "이런 분을 찾고 있어요", "이런 분을 찾아요", "이런 분을 기다립니다",
         "이런 분과 함께하고 싶어요", "지원 자격", "지원자격", "자격 요건", "자격요건",
-        "필수 사항", "필수 요건", "필수 자격", "지원 대상", "Requirements", "Qualifications",
+        "필수 사항", "필수 요건", "필수 자격", "지원자격 및 요건", "지원 대상", "Requirements", "Qualifications",
         "Required Qualifications", "What we're looking for", "Who you are",
     ),
     "preferred": (
-        "이런 분이면 더더욱 환영해요", "이런 경험이 있다면 더욱 좋아요",
+        "이런 분이면 더더욱 환영해요", "이런 분이면 더 좋아요", "이런 경험이 있다면 더욱 좋아요",
         "이런 경험이 있다면 더 좋아요", "이번 채용은 이런 분을 우대해요",
-        "우대 사항", "우대사항", "우대 요건", "우대 자격", "Preferred Qualifications",
+        "우대 사항", "우대사항", "우대사항 및 역량", "우대 요건", "우대 자격", "Preferred Qualifications",
         "Preferred", "Nice to have", "Nice-to-have", "Plus if you have",
     ),
     "benefits": (
         "혜택", "혜택 및 복지", "복지", "복리후생", "디밀은 이렇게 일해요", "이런 혜택을 드려요",
         "지원 내용", "참여 혜택", "활동 혜택", "상금", "시상 내역",
     ),
-    "conditions": ("근무 환경", "근무 조건", "근무 장소", "근무지", "꼭 확인해주세요"),
+    "conditions": (
+        "고용 조건", "근무 환경", "근무 조건", "근무 형태", "근무 장소", "근무지",
+        "꼭 확인해주세요",
+    ),
     "process": (
         "채용은 이렇게 진행돼요", "전형 절차 및 일정", "지원 전 꼭 확인해 주세요", "참고 사항",
         "지원서류", "인재영입 프로세스", "채용 절차", "이력서는 이렇게 작성하시는 걸 추천해요",
-        "토스로의 합류여정",
+        "토스로의 합류여정", "채용 전형", "합류 여정", "전형 절차", "지원 절차", "지원 방법",
+        "지원 서류", "제출 서류",
     ),
     "essay": (
         "자기소개서 문항", "자기 소개서 문항", "자소서 문항", "지원서 문항", "에세이 문항",
@@ -99,6 +105,12 @@ SECTION_HEADINGS = {
         "Take-home Assignment", "Take Home Assignment", "Design Test", "Task", "Practical Test",
     ),
 }
+SECTION_BOUNDARY_HEADINGS = (
+    "문화 및 복지", "문화 및", "복지", "복리후생", "혜택", "마감기한", "마감 기한",
+    "접수 기간", "접수기간", "접수 마감", "지원서 접수 마감", "마감일", "게시일", "등록일",
+    "채용 시 마감", "기타 사항", "유의사항", "회사 소개",
+    "팀 소개", "포지션 소개", "채용 배경", "지원 시 직군/직무 설정",
+)
 SECTION_HEADING_VALUES = tuple(
     heading for headings in SECTION_HEADINGS.values() for heading in headings
 )
@@ -111,6 +123,13 @@ SECTION_TITLE_RE = re.compile(
 )
 INLINE_SECTION_RE = re.compile(rf"\[\s*(?:{SECTION_TITLE_PATTERN})\s*\]|(?:{SECTION_TITLE_PATTERN})", re.I)
 DECORATION_ONLY_RE = re.compile(r"^[\sㆍ•·\-–—😉❤❤️♡]+$")
+STRUCTURED_DECORATION_RE = re.compile(r"^[\s\[\](){}:：!！❖🌟📌🎯✨ㆍ•·\-–—]+$")
+URL_ONLY_RE = re.compile(r"^(?:https?://|www\.)\S+$", re.I)
+ROLE_MARKER_RE = re.compile(
+    r"^\s*(?:\d{1,2}[.)]\s*)?(?=\S)(?:.*?)(?:디자이너|디자인|UI\s*/?\s*UX|그래픽|BX|브랜드|일러스트)"
+    r"(?:.*?)(?:인턴|디자이너|직무|부문)\s*$",
+    re.I,
+)
 COMPACT_BULLET_RE = re.compile(r"^[ㆍ•·]\s*(\S.*)$")
 SPACED_BULLET_RE = re.compile(r"^[\-–—]\s+(\S.*)$")
 RESUME_GUIDANCE_RE = re.compile(
@@ -132,6 +151,68 @@ MIN_UNRESOLVED_REPEAT_CHARS = 120
 
 def _heading_patterns(kind: str) -> list[str]:
     return [re.escape(value).replace(r"\ ", r"\s*") for value in SECTION_HEADINGS[kind]]
+
+
+def _strip_heading_wrapper(text: str) -> str:
+    value = clean_text(text)
+    value = re.sub(r"^[\s\[\](){}:：🌟📌🎯✨❖!！]+", "", value)
+    value = re.sub(r"[\s\[\](){}:：!！]+$", "", value)
+    return clean_text(value)
+
+
+def _exact_section_kind(text: str) -> str | None:
+    candidate = _strip_heading_wrapper(text)
+    if not candidate:
+        return None
+    for kind in SECTION_HEADINGS:
+        if any(re.fullmatch(pattern, candidate, re.I) for pattern in _heading_patterns(kind)):
+            return kind
+    if any(
+        re.fullmatch(re.escape(value).replace(r"\ ", r"\s*"), candidate, re.I)
+        for value in SECTION_BOUNDARY_HEADINGS
+    ):
+        return "boundary"
+    if len(candidate) <= 60 and re.fullmatch(
+        r".+?(?:디자이너|Designer|디자인\s*직무|디자인\s*팀)(?:는|은)\s*이렇게\s*일해요",
+        candidate,
+        re.I,
+    ):
+        return "duties"
+    if len(candidate) <= 60 and re.fullmatch(r".+?에서는\s*이런\s*일을\s*해요", candidate, re.I):
+        return "duties"
+    return None
+
+
+def _logical_section_kind(blocks: list[ContentBlock], index: int) -> str | None:
+    direct = _exact_section_kind(blocks[index].text)
+    if direct:
+        return direct
+    # Fusion can split one heading across adjacent paragraph/heading nodes,
+    # such as "지원" + "자격" + "요건" or "문화 및" + "복지".
+    for start, end in (
+        (index - 1, index + 1), (index, index + 2), (index - 1, index + 2),
+        (index, index + 3),
+    ):
+        if start < 0 or end > len(blocks):
+            continue
+        pieces = [_strip_heading_wrapper(block.text) for block in blocks[start:end]]
+        if any(not piece or len(piece) > 30 for piece in pieces):
+            continue
+        combined = clean_text(" ".join(pieces))
+        if re.fullmatch(r"지원\s*자격\s*요건", combined):
+            return "audience"
+        combined_kind = _exact_section_kind(combined)
+        if combined_kind:
+            return combined_kind
+    return None
+
+
+def _is_role_marker(block: ContentBlock) -> bool:
+    text = _strip_heading_wrapper(block.text)
+    numbered = bool(re.match(r"^\d{1,2}[.)]\s*", text))
+    return bool(ROLE_MARKER_RE.fullmatch(text)) and (
+        block.kind.startswith("heading") or numbered
+    ) and bool(detect_design_fields(text, ""))
 TRAILING_NOISE_RE = re.compile(
     r"(?:최신\s*댓글|추천\s*(?:아티클|콘텐츠|공고)|오늘\s*핫한\s*공고|"
     r"함께\s*보면\s*좋은\s*커리어\s*정보|관련\s*공고|카톡\s*(?:채팅방|오픈채팅)|"
@@ -465,15 +546,11 @@ def _walk_blocks(node: Tag) -> tuple[list[ContentBlock], bool]:
             line_start = text.rfind("\n", 0, match.start()) + 1
             line_end = text.find("\n", match.end())
             line = text[line_start : line_end if line_end >= 0 else len(text)]
-            matched_heading = clean_text(match.group(0)).strip("[]() ")
-            assignment_heading = any(
-                re.fullmatch(pattern, matched_heading, re.I)
-                for pattern in _heading_patterns("assignment")
-            )
-            ambiguous_short_heading = matched_heading.lower() in {"preferred"} or assignment_heading
-            if _bullet_text(line) is None and (
-                not ambiguous_short_heading or SECTION_TITLE_RE.fullmatch(line)
-            ):
+            # A section word inside a normal sentence is not a heading. Fusion
+            # wrappers and bracketed headings still resolve after decoration
+            # normalization, while ordinary prose remains intact.
+            bracketed = clean_text(match.group(0)).startswith("[")
+            if _bullet_text(line) is None and (bracketed or _exact_section_kind(line)):
                 matches.append(match)
         if not matches:
             return [("content", text)]
@@ -768,51 +845,107 @@ def _join_complete_lines(lines: list[str], max_chars: int) -> str:
     return clean_text("\n".join(output))
 
 
-def _extract_section(blocks: list[ContentBlock], heading_patterns: list[str], max_chars: int = 1800) -> str:
+def _extract_section(
+    blocks: list[ContentBlock],
+    heading_patterns: list[str],
+    max_chars: int = 1800,
+    section_kind: str | None = None,
+) -> str:
     heading_re = re.compile("|".join(heading_patterns), re.I)
-    output: list[str] = []
+    candidates: list[tuple[int, int, list[str]]] = []
     collecting = False
-    for block in blocks:
-        if block.kind.startswith("heading"):
-            if collecting:
-                break
-            if heading_re.search(block.text):
-                collecting = True
-            continue
-        if collecting and block.text:
-            if re.match(
-                r"^(?:게시일|등록일|접수\s*(?:기간|마감)|지원(?:서)?\s*(?:기간|접수\s*마감)|마감일|근무\s*(?:지|장소|조건))\s*[:：]?",
-                block.text,
+    output: list[str] = []
+    priority = 0
+    start_index = -1
+    for index, block in enumerate(blocks):
+        logical_kind = _logical_section_kind(blocks, index)
+        candidate_text = _strip_heading_wrapper(block.text)
+        is_target = (
+            logical_kind == section_kind
+            if section_kind
+            else block.kind.startswith("heading") and bool(heading_re.search(candidate_text))
+        )
+        if is_target and not collecting:
+            collecting = True
+            output = []
+            start_index = index
+            priority = 2 if re.fullmatch(
+                r"(?:주요|담당|수행)\s*업무|업무\s*내용|자격\s*요건|지원\s*자격|"
+                r"지원자격|우대\s*사항|우대\s*요건|우대\s*자격",
+                candidate_text,
                 re.I,
-            ):
-                break
-            output.append(block.text)
-    return _join_complete_lines(output, max_chars)
+            ) else 1
+            continue
+        if not collecting:
+            continue
+        if logical_kind or block.kind.startswith("heading") or _is_role_marker(block):
+            if logical_kind == section_kind and not output:
+                continue
+            candidates.append((priority, start_index, output))
+            collecting = False
+            output = []
+            if is_target:
+                collecting = True
+                start_index = index
+            continue
+        text = clean_text(block.text)
+        if not text or STRUCTURED_DECORATION_RE.fullmatch(text):
+            continue
+        if re.match(
+            r"^(?:게시일|등록일|접수\s*(?:기간|마감)|지원(?:서)?\s*(?:기간|접수\s*마감)|"
+            r"마감일|마감\s*기한|근무\s*(?:지|장소|조건))\s*[:：]?",
+            text,
+            re.I,
+        ):
+            candidates.append((priority, start_index, output))
+            collecting = False
+            output = []
+            continue
+        if section_kind in {"duties", "audience", "preferred"} and (
+            URL_ONLY_RE.fullmatch(text)
+            or re.fullmatch(r".*홈페이지.*(?:블로그|SNS).*", text, re.I)
+        ):
+            candidates.append((priority, start_index, output))
+            collecting = False
+            output = []
+            continue
+        output.append(text)
+    if collecting:
+        candidates.append((priority, start_index, output))
+    if not candidates:
+        return ""
+    # Explicit headings win over broad natural-language headings. For equal
+    # headings prefer the later complete section, avoiding introductory copies.
+    _, _, selected = max(candidates, key=lambda item: (item[0], item[1]))
+    while selected and STRUCTURED_DECORATION_RE.fullmatch(selected[0]):
+        selected.pop(0)
+    while selected and STRUCTURED_DECORATION_RE.fullmatch(selected[-1]):
+        selected.pop()
+    return _join_complete_lines(selected, max_chars)
 
 
 def _has_section(blocks: list[ContentBlock], section: str) -> bool:
-    pattern = re.compile("|".join(_heading_patterns(section)), re.I)
-    return any(block.kind.startswith("heading") and pattern.search(block.text) for block in blocks)
+    return any(_logical_section_kind(blocks, index) == section for index in range(len(blocks)))
 
 
 def extract_target_audience(blocks: list[ContentBlock], content_type: str) -> str:
     if content_type == "채용공고":
         return ""
-    return _extract_section(blocks, _heading_patterns("audience"), max_chars=1200)
+    return _extract_section(blocks, _heading_patterns("audience"), 1200, "audience")
 
 
 def extract_qualifications(blocks: list[ContentBlock], content_type: str) -> str:
     if content_type != "채용공고":
         return ""
-    return _extract_section(blocks, _heading_patterns("audience"), max_chars=1800)
+    return _extract_section(blocks, _heading_patterns("audience"), 1800, "audience")
 
 
 def extract_preferred_qualifications(blocks: list[ContentBlock]) -> str:
-    return _extract_section(blocks, _heading_patterns("preferred"), max_chars=1800)
+    return _extract_section(blocks, _heading_patterns("preferred"), 1800, "preferred")
 
 
 def extract_essay_questions(blocks: list[ContentBlock]) -> str:
-    value = _extract_section(blocks, _heading_patterns("essay"), max_chars=1800)
+    value = _extract_section(blocks, _heading_patterns("essay"), 1800, "essay")
     lines = [line for line in value.splitlines() if line]
     if lines and all(ESSAY_SUBMISSION_ONLY_RE.fullmatch(line) for line in lines):
         return ""
@@ -822,25 +955,26 @@ def extract_essay_questions(blocks: list[ContentBlock]) -> str:
 def extract_pre_assignment(blocks: list[ContentBlock]) -> str:
     # Only an explicit section starts extraction. Incidental mentions in work
     # history, portfolios, or a generic hiring-process sentence are ignored.
-    heading_re = re.compile("|".join(_heading_patterns("assignment")), re.I)
     output: list[str] = []
     collecting = False
     first_heading = ""
-    for block in blocks:
-        if block.kind.startswith("heading"):
-            if not collecting and heading_re.search(block.text):
-                collecting = True
-                first_heading = clean_text(block.text)
-                continue
-            if collecting and not output and heading_re.search(block.text):
-                if clean_text(block.text) != first_heading:
-                    output.append(block.text)
-                    continue
-            if collecting:
-                break
+    for index, block in enumerate(blocks):
+        logical_kind = _logical_section_kind(blocks, index)
+        if logical_kind == "assignment" and not collecting:
+            collecting = True
+            first_heading = _strip_heading_wrapper(block.text)
             continue
+        if collecting and (logical_kind or block.kind.startswith("heading")):
+            if logical_kind == "assignment" and not output:
+                candidate = _strip_heading_wrapper(block.text)
+                if candidate and candidate != first_heading:
+                    output.append(candidate)
+                continue
+            break
         if collecting and block.text:
-            output.append(block.text)
+            text = clean_text(block.text)
+            if not STRUCTURED_DECORATION_RE.fullmatch(text):
+                output.append(text)
     return _join_complete_lines(output, 1800)
 
 
@@ -850,7 +984,9 @@ def extract_key_duties(blocks: list[ContentBlock], content_type: str) -> str:
         if content_type == "채용공고"
         else [r"활동\s*내용", r"프로그램\s*내용", r"공모\s*주제", r"모집\s*분야", r"주요\s*활동"]
     )
-    return _extract_section(blocks, patterns, max_chars=1800)
+    return _extract_section(
+        blocks, patterns, 1800, "duties" if content_type == "채용공고" else None
+    )
 
 
 def extract_benefits(blocks: list[ContentBlock]) -> str:
@@ -858,6 +994,7 @@ def extract_benefits(blocks: list[ContentBlock]) -> str:
         blocks,
         _heading_patterns("benefits") + [r"활동비"],
         max_chars=1200,
+        section_kind="benefits",
     )
 
 
@@ -876,12 +1013,26 @@ def _structured_sections_are_consistent(
     blocks: list[ContentBlock], sections: dict[str, str]
 ) -> bool:
     body_lines = {clean_text(block.text) for block in blocks if block.text}
-    return all(
+    present_in_body = all(
         any(body_line == clean_text(line) or body_line.startswith(clean_text(line)) for body_line in body_lines)
         for value in sections.values()
         for line in value.splitlines()
         if clean_text(line)
     )
+    if not present_in_body:
+        return False
+    for field in ("key_duties", "qualifications", "preferred_qualifications"):
+        lines = [clean_text(line) for line in sections[field].splitlines() if clean_text(line)]
+        if not lines:
+            continue
+        if STRUCTURED_DECORATION_RE.fullmatch(lines[0]) or STRUCTURED_DECORATION_RE.fullmatch(lines[-1]):
+            return False
+        for line in lines:
+            if URL_ONLY_RE.fullmatch(line) or _exact_section_kind(line) is not None:
+                return False
+            if _is_role_marker(ContentBlock(kind="paragraph", text=line)):
+                return False
+    return True
 
 
 def _line_value(body_text: str, labels: str, max_chars: int = 500) -> str:
@@ -999,6 +1150,7 @@ def _quality_reasons(
 ) -> dict[str, bool]:
     sections = _structured_sections(blocks, content_type)
     body_text = _all_text(blocks)
+    multiple_role_markers = sum(_is_role_marker(block) for block in blocks) >= 2
     return {
         "suspicious_title": title == "제목 미기재" or bool(SECTION_TITLE_RE.fullmatch(title)),
         "missing_body": not blocks,
@@ -1011,7 +1163,9 @@ def _quality_reasons(
         "empty_preferred_section": _has_section(blocks, "preferred") and not sections["preferred_qualifications"],
         "empty_essay_questions_section": _has_section(blocks, "essay") and not sections["essay_questions"],
         "empty_pre_assignment_section": _has_section(blocks, "assignment") and not sections["pre_assignment"],
-        "inconsistent_structured_sections": not _structured_sections_are_consistent(blocks, sections),
+        "inconsistent_structured_sections": (
+            multiple_role_markers or not _structured_sections_are_consistent(blocks, sections)
+        ),
     }
 
 
@@ -1094,15 +1248,7 @@ def parse_post_html_records(
     """Parse a page, splitting clearly separated design roles into stable records."""
     record = parse_post_html(html, source_url, fallback_categories)
     role_markers = [
-        index
-        for index, block in enumerate(record.body_blocks)
-        if block.kind.startswith("heading")
-        and re.search(
-            r"디자이너|디자인\s*(?:직무|부문|인턴)|UI\s*/?\s*UX|그래픽|BX|브랜드|일러스트",
-            block.text,
-            re.I,
-        )
-        and detect_design_fields(block.text, "")
+        index for index, block in enumerate(record.body_blocks) if _is_role_marker(block)
     ]
     if len(role_markers) < 2:
         return [record]
