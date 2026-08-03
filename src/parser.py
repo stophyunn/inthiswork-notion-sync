@@ -825,15 +825,19 @@ def extract_apply_url(soup: BeautifulSoup, source_url: str) -> str | None:
     candidates: list[str] = []
     for anchor in soup.find_all("a", href=True):
         text = clean_text(anchor.get_text(" ", strip=True))
-        href = urljoin(source_url, str(anchor["href"]))
-        parsed = urlparse(href)
+        try:
+            href = urljoin(source_url, str(anchor["href"]).strip())
+            parsed = urlparse(href)
+            host = (parsed.hostname or "").lower()
+        except ValueError:
+            continue
         if parsed.scheme not in {"http", "https"}:
             continue
         if parsed.netloc.replace("www.", "") == source_host:
             continue
         if preferred.search(text):
             return href
-        if any(domain in parsed.netloc.lower() for domain in ["recruit", "career", "jobs", "forms", "google"]):
+        if any(domain in host for domain in ["recruit", "career", "jobs", "forms", "google"]):
             candidates.append(href)
     return candidates[0] if candidates else None
 

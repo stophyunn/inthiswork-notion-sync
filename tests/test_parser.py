@@ -66,6 +66,29 @@ def test_parse_job_post():
     assert record.content_hash
 
 
+def test_malformed_application_link_is_skipped_before_valid_link():
+    html = JOB_HTML.replace(
+        '<a href="https://jobs.example.com/apply">지원하러 가기</a>',
+        '<a href="https://resumegenius.com]">지원하기</a>'
+        '<a href="https://jobs.example.com/apply">지원하러 가기</a>',
+    )
+
+    record = parse_post_html(html, "https://inthiswork.com/archives/123456")
+
+    assert record.apply_url == "https://jobs.example.com/apply"
+
+
+def test_malformed_application_link_alone_returns_none():
+    html = JOB_HTML.replace(
+        '<a href="https://jobs.example.com/apply">지원하러 가기</a>',
+        '<a href="https://resumegenius.com]">지원하기</a>',
+    )
+
+    record = parse_post_html(html, "https://inthiswork.com/archives/123456")
+
+    assert record.apply_url is None
+
+
 def test_parse_competition():
     record = parse_post_html(ACTIVITY_HTML, "https://inthiswork.com/archives/999999")
     assert record.content_type == "공모전"
