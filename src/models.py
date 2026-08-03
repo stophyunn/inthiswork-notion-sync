@@ -44,5 +44,6 @@ class PostRecord:
     status: str = "확인 필요"
     apply_url: str | None = None
     collection_status: str = "정상"
+    quality_reasons: dict[str, bool] = field(default_factory=dict)
     body_blocks: list[ContentBlock] = field(default_factory=list)
     content_hash: str = ""

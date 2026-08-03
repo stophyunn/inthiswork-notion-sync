@@ -1,3 +1,5 @@
+import pytest
+
 from src.parser import parse_post_html
 
 
@@ -137,7 +139,7 @@ def test_regression_379384_splits_multiple_design_roles():
 
 def test_tinkware_live_shape_prefers_metadata_and_splits_flat_sections():
     record = parse_post_html(
-        _fixture("tinkware_live"), "https://inthiswork.com/archives/400001"
+        _fixture("tinkware_live"), "https://inthiswork.com/archives/380820"
     )
 
     assert record.title == "팅크웨어｜아이나비 브랜드 콘텐츠 디자인 (경력)"
@@ -151,6 +153,147 @@ def test_tinkware_live_shape_prefers_metadata_and_splits_flat_sections():
     assert any(block.kind == "bulleted_list_item" for block in record.body_blocks)
     assert record.benefits_prize == "유연 근무제"
     assert record.collection_status == "정상"
+    assert not any(record.quality_reasons.values())
+    assert all(
+        block.kind == "bulleted_list_item"
+        for block in record.body_blocks
+        if block.text in {
+            "브랜드 콘텐츠 디자인",
+            "SNS 비주얼 제작",
+            "프로모션 그래픽 제작",
+            "브랜드 가이드 운영",
+            "촬영 비주얼 디렉팅",
+            "유관 부서 협업",
+        }
+    )
+
+
+@pytest.mark.parametrize("marker", ["ㆍ", "•", "·"])
+def test_compact_dot_markers_are_bullets_without_spaces(marker):
+    html = f"""
+    <html><head><meta property="og:title" content="회사｜콘텐츠 디자이너 채용" /></head>
+    <body><article><div class="fusion-content-tb"><p>수행 업무\n{marker}업무 내용</p></div></article></body></html>
+    """
+
+    record = parse_post_html(html, "https://inthiswork.com/archives/600001")
+
+    assert any(
+        block.kind == "bulleted_list_item" and block.text == "업무 내용"
+        for block in record.body_blocks
+    )
+
+
+@pytest.mark.parametrize("marker", ["-", "–", "—"])
+def test_dash_markers_are_bullets_only_with_spaces(marker):
+    html = f"""
+    <html><head><meta property="og:title" content="회사｜콘텐츠 디자이너 채용" /></head>
+    <body><article><div class="fusion-content-tb"><p>수행 업무\n{marker} 업무 내용</p></div></article></body></html>
+    """
+
+    record = parse_post_html(html, "https://inthiswork.com/archives/600002")
+
+    assert any(
+        block.kind == "bulleted_list_item" and block.text == "업무 내용"
+        for block in record.body_blocks
+    )
+
+
+def test_dates_negative_numbers_and_inline_hyphens_are_not_bullets():
+    html = """
+    <html><head><meta property="og:title" content="회사｜콘텐츠 디자이너 채용" /></head>
+    <body><article><div class="fusion-content-tb"><p>수행 업무
+    2026-08-12
+    -3
+    문장 중간-하이픈</p></div></article></body></html>
+    """
+
+    record = parse_post_html(html, "https://inthiswork.com/archives/600003")
+    blocks = {block.text: block.kind for block in record.body_blocks}
+
+    assert blocks["2026-08-12"] == "paragraph"
+    assert blocks["-3"] == "paragraph"
+    assert blocks["문장 중간-하이픈"] == "paragraph"
+
+
+def test_native_unordered_and_ordered_lists_keep_their_block_kinds():
+    html = """
+    <html><head><meta property="og:title" content="회사｜콘텐츠 디자이너 채용" /></head>
+    <body><article><div class="fusion-content-tb"><h2>수행 업무</h2>
+    <ul><li>브랜드 콘텐츠 제작</li></ul>
+    <ol><li>포트폴리오 제출</li></ol>
+    </div></article></body></html>
+    """
+
+    record = parse_post_html(html, "https://inthiswork.com/archives/600008")
+    blocks = {block.text: block.kind for block in record.body_blocks}
+
+    assert blocks["브랜드 콘텐츠 제작"] == "bulleted_list_item"
+    assert blocks["포트폴리오 제출"] == "numbered_list_item"
+
+
+def test_repeated_heading_with_distinct_content_is_preserved_without_review():
+    html = """
+    <html><head><meta property="og:title" content="회사｜콘텐츠 디자이너 채용" /></head>
+    <body><article><div class="fusion-content-tb">
+    <h2>수행 업무</h2><p>브랜드 영상 제작</p>
+    <h2>수행 업무</h2><p>마케팅 콘텐츠 편집</p>
+    </div></article></body></html>
+    """
+
+    record = parse_post_html(html, "https://inthiswork.com/archives/600004")
+
+    assert [block.text for block in record.body_blocks] == [
+        "수행 업무", "브랜드 영상 제작", "수행 업무", "마케팅 콘텐츠 편집"
+    ]
+    assert record.collection_status == "정상"
+    assert record.quality_reasons["unresolved_repetition"] is False
+
+
+def test_orphan_duplicate_heading_is_removed_after_render_deduplication():
+    html = """
+    <html><head><meta property="og:title" content="회사｜콘텐츠 디자이너 채용" /></head>
+    <body><article><div class="fusion-content-tb">
+    <h2>수행 업무</h2><p>브랜드 영상 제작</p><h2>수행 업무</h2>
+    </div></article></body></html>
+    """
+
+    record = parse_post_html(html, "https://inthiswork.com/archives/600005")
+
+    assert sum(block.text == "수행 업무" for block in record.body_blocks) == 1
+    assert record.collection_status == "정상"
+
+
+def test_repeated_meaningful_body_sequence_requires_review():
+    html = """
+    <html><head><meta property="og:title" content="회사｜콘텐츠 디자이너 채용" /></head>
+    <body><article><div class="fusion-content-tb"><h2>수행 업무</h2>
+    <p>브랜드 영상 제작</p><p>마케팅 콘텐츠 편집</p>
+    <p>브랜드 영상 제작</p><p>마케팅 콘텐츠 편집</p>
+    </div></article></body></html>
+    """
+
+    record = parse_post_html(html, "https://inthiswork.com/archives/600006")
+
+    assert record.collection_status == "검토 필요"
+    assert record.quality_reasons["unresolved_repetition"] is True
+
+
+def test_benefits_stop_at_last_complete_line():
+    first_line = " ".join(f"리프레시휴가{index:02d}" for index in range(80))
+    second_line = " ".join(f"포상지원제도{index:02d}" for index in range(80))
+    html = f"""
+    <html><head><meta property="og:title" content="회사｜콘텐츠 디자이너 채용" /></head>
+    <body><article><div class="fusion-content-tb">
+    <h2>수행 업무</h2><p>브랜드 콘텐츠 제작</p>
+    <h2>혜택 및 복지</h2><p>{first_line}</p><p>{second_line}</p>
+    </div></article></body></html>
+    """
+
+    record = parse_post_html(html, "https://inthiswork.com/archives/600007")
+
+    assert record.benefits_prize == first_line
+    assert record.benefits_prize.endswith("리프레시휴가79")
+    assert len(record.benefits_prize) <= 1200
 
 
 def test_dmil_live_shape_ignores_publish_year_and_non_duty_design_terms():

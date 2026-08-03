@@ -91,6 +91,8 @@ SECTION_TITLE_PATTERN = "|".join(
 SECTION_TITLE_RE = re.compile(rf"^\[?\s*(?:{SECTION_TITLE_PATTERN})\s*\]?$", re.I)
 INLINE_SECTION_RE = re.compile(rf"\[\s*(?:{SECTION_TITLE_PATTERN})\s*\]|(?:{SECTION_TITLE_PATTERN})", re.I)
 DECORATION_ONLY_RE = re.compile(r"^[\sㆍ•·\-–—😉❤❤️♡]+$")
+COMPACT_BULLET_RE = re.compile(r"^[ㆍ•·]\s*(\S.*)$")
+SPACED_BULLET_RE = re.compile(r"^[\-–—]\s+(\S.*)$")
 
 
 def _heading_patterns(kind: str) -> list[str]:
@@ -112,6 +114,76 @@ def clean_text(value: str) -> str:
     value = re.sub(r"[ ]+\n", "\n", value)
     value = re.sub(r"\n{3,}", "\n\n", value)
     return value.strip()
+
+
+def _bullet_text(value: str) -> str | None:
+    """Return text after a supported line-leading bullet marker."""
+    normalized = clean_text(value)
+    marker = COMPACT_BULLET_RE.match(normalized) or SPACED_BULLET_RE.match(normalized)
+    return clean_text(marker.group(1)) if marker else None
+
+
+def _remove_duplicate_renderings(blocks: list[ContentBlock]) -> list[ContentBlock]:
+    """Remove confidently identified desktop/mobile copies and empty headings."""
+    result: list[ContentBlock] = []
+    for block in blocks:
+        if (
+            result
+            and not block.kind.startswith("heading")
+            and block == result[-1]
+        ):
+            continue
+        result.append(block)
+
+    # A repeated adjacent sequence containing a heading is a strong rendering-copy
+    # signal. Body-only repetitions remain available for quality inspection.
+    changed = True
+    while changed:
+        changed = False
+        for size in range(len(result) // 2, 1, -1):
+            for start in range(0, len(result) - size * 2 + 1):
+                first = result[start : start + size]
+                second = result[start + size : start + size * 2]
+                if first == second and any(block.kind.startswith("heading") for block in first):
+                    del result[start + size : start + size * 2]
+                    changed = True
+                    break
+            if changed:
+                break
+
+    seen_headings: set[str] = set()
+    cleaned: list[ContentBlock] = []
+    for index, block in enumerate(result):
+        if not block.kind.startswith("heading"):
+            cleaned.append(block)
+            continue
+        heading = clean_text(block.text).casefold()
+        end = index + 1
+        while end < len(result) and not result[end].kind.startswith("heading"):
+            end += 1
+        has_content = any(item.text for item in result[index + 1 : end])
+        if heading in seen_headings and not has_content:
+            continue
+        seen_headings.add(heading)
+        cleaned.append(block)
+    return cleaned
+
+
+def _has_unresolved_repetition(blocks: list[ContentBlock]) -> bool:
+    """Detect an adjacent repeated meaningful body sequence within a section."""
+    sections: list[list[tuple[str, str]]] = [[]]
+    for block in blocks:
+        if block.kind.startswith("heading"):
+            sections.append([])
+        elif block.kind != "divider" and block.text:
+            sections[-1].append((block.kind, clean_text(block.text).casefold()))
+
+    for section in sections:
+        for size in range(2, len(section) // 2 + 1):
+            for start in range(0, len(section) - size * 2 + 1):
+                if section[start : start + size] == section[start + size : start + size * 2]:
+                    return True
+    return False
 
 
 def _meta_content(soup: BeautifulSoup, *keys: str) -> str:
@@ -246,16 +318,8 @@ def _walk_blocks(node: Tag) -> tuple[list[ContentBlock], bool]:
         ):
             return
         block = ContentBlock(kind=kind, text=normalized)  # type: ignore[arg-type]
-        # Some Fusion templates render the same post body twice (desktop/mobile).
-        # A global fingerprint avoids saving the duplicate copy to Notion.
-        fingerprint = (block.kind, block.text)
-        if not block.kind.startswith("heading") and fingerprint in seen:
-            return
-        if not block.kind.startswith("heading"):
-            seen.add(fingerprint)
         blocks.append(block)
 
-    seen: set[tuple[str, str]] = set()
     stopped = False
 
     def deduplicate_repeated_text(text: str) -> tuple[str, bool]:
@@ -272,7 +336,13 @@ def _walk_blocks(node: Tag) -> tuple[list[ContentBlock], bool]:
 
     def split_sections(text: str) -> list[tuple[str, str]]:
         """Split flattened Fusion text without losing the original ordering."""
-        matches = list(INLINE_SECTION_RE.finditer(text))
+        matches = []
+        for match in INLINE_SECTION_RE.finditer(text):
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            line_end = text.find("\n", match.end())
+            line = text[line_start : line_end if line_end >= 0 else len(text)]
+            if _bullet_text(line) is None:
+                matches.append(match)
         if not matches:
             return [("content", text)]
         parts: list[tuple[str, str]] = []
@@ -289,16 +359,14 @@ def _walk_blocks(node: Tag) -> tuple[list[ContentBlock], bool]:
         return parts
 
     def add_content(text: str, default_kind: str = "paragraph") -> None:
-        # Only a marker at the start of a line is a bullet; hyphens in dates and
-        # ordinary prose are deliberately left alone.
         lines = [clean_text(line) for line in text.splitlines() if clean_text(line)]
         if len(lines) > 1:
             for line in lines:
-                marker = re.match(r"^\s*[ㆍ•·\-–—]\s+(.*)$", line)
-                add("bulleted_list_item" if marker else default_kind, marker.group(1) if marker else line)
+                bullet = _bullet_text(line)
+                add("bulleted_list_item" if bullet is not None else default_kind, bullet or line)
             return
-        marker = re.match(r"^\s*[ㆍ•·\-–—]\s+(.*)$", text)
-        add("bulleted_list_item" if marker else default_kind, marker.group(1) if marker else text)
+        bullet = _bullet_text(text)
+        add("bulleted_list_item" if bullet is not None else default_kind, bullet or text)
 
     def add_paragraph_content(text: str, default_kind: str = "paragraph") -> None:
         nonlocal repeated_body
@@ -376,7 +444,7 @@ def _walk_blocks(node: Tag) -> tuple[list[ContentBlock], bool]:
                 walk(child)
 
     walk(node)
-    return blocks, repeated_body
+    return _remove_duplicate_renderings(blocks), repeated_body
 
 
 def extract_body_blocks(soup: BeautifulSoup) -> tuple[list[ContentBlock], bool, bool]:
@@ -542,6 +610,28 @@ def extract_employment_types(title: str, body_text: str, content_type: str) -> l
     return values
 
 
+def _truncate_at_text_boundary(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    prefix = text[: max_chars + 1]
+    boundaries = [match.end() for match in re.finditer(r"(?:\s+|[.!?。！？](?=\s|$))", prefix)]
+    return clean_text(prefix[: boundaries[-1]]) if boundaries else clean_text(text[:max_chars])
+
+
+def _join_complete_lines(lines: list[str], max_chars: int) -> str:
+    output: list[str] = []
+    length = 0
+    for line in lines:
+        separator_length = 1 if output else 0
+        if length + separator_length + len(line) > max_chars:
+            if not output:
+                output.append(_truncate_at_text_boundary(line, max_chars))
+            break
+        output.append(line)
+        length += separator_length + len(line)
+    return clean_text("\n".join(output))
+
+
 def _extract_section(blocks: list[ContentBlock], heading_patterns: list[str], max_chars: int = 1800) -> str:
     heading_re = re.compile("|".join(heading_patterns), re.I)
     output: list[str] = []
@@ -561,9 +651,7 @@ def _extract_section(blocks: list[ContentBlock], heading_patterns: list[str], ma
             ):
                 break
             output.append(block.text)
-            if sum(len(x) for x in output) >= max_chars:
-                break
-    return clean_text("\n".join(output))[:max_chars]
+    return _join_complete_lines(output, max_chars)
 
 
 def extract_target_audience(blocks: list[ContentBlock]) -> str:
@@ -703,11 +791,17 @@ def parse_post_html(
     missing_body = not body_blocks
     missing_job_duties = content_type == "채용공고" and not key_duties
     image_only_content = had_images and len(body_text) < 300
-    fingerprints = [(block.kind, block.text) for block in body_blocks if block.text]
-    unresolved_repetition = len(fingerprints) != len(set(fingerprints))
+    unresolved_repetition = _has_unresolved_repetition(body_blocks)
+    quality_reasons = {
+        "suspicious_title": suspicious_title,
+        "missing_body": missing_body,
+        "missing_job_duties": missing_job_duties,
+        "image_only_content": image_only_content,
+        "unresolved_repetition": unresolved_repetition,
+    }
     collection_status = (
         "검토 필요"
-        if missing_body or suspicious_title or missing_job_duties or image_only_content or unresolved_repetition
+        if any(quality_reasons.values())
         else "정상"
     )
     record = PostRecord(
@@ -732,6 +826,7 @@ def parse_post_html(
         status=status,
         apply_url=apply_url,
         collection_status=collection_status,
+        quality_reasons=quality_reasons,
         body_blocks=body_blocks,
     )
     record.content_hash = compute_hash(
