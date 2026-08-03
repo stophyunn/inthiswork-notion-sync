@@ -64,15 +64,19 @@ SECTION_HEADINGS = {
         "이런 일을 함께해요", "이런 경험을 할 수 있어요", "이런 업무를 함께 할 예정이에요",
         "이런 업무를 담당해요", "합류하면 함께 할 업무예요", "합류하면 함께할 업무예요",
         "주요 업무", "담당 업무", "수행 업무", "업무 내용", "하실 일", "역할",
+        "Responsibilities", "What you'll do", "What you will do", "Your role",
     ),
     "audience": (
         "이런 분을 모시고 있어요", "이런 분을 찾고 있어요", "이런 분을 기다립니다",
-        "이런 분과 함께하고 싶어요", "지원 자격", "자격 요건", "필수 사항", "지원 대상",
+        "이런 분과 함께하고 싶어요", "지원 자격", "지원자격", "자격 요건", "자격요건",
+        "필수 사항", "필수 요건", "필수 자격", "지원 대상", "Requirements", "Qualifications",
+        "Required Qualifications", "What we're looking for", "Who you are",
     ),
     "preferred": (
         "이런 분이면 더더욱 환영해요", "이런 경험이 있다면 더욱 좋아요",
         "이런 경험이 있다면 더 좋아요", "이번 채용은 이런 분을 우대해요",
-        "우대 사항",
+        "우대 사항", "우대사항", "우대 요건", "우대 자격", "Preferred Qualifications",
+        "Preferred", "Nice to have", "Nice-to-have", "Plus if you have",
     ),
     "benefits": (
         "혜택", "혜택 및 복지", "복지", "복리후생", "디밀은 이렇게 일해요", "이런 혜택을 드려요",
@@ -84,6 +88,16 @@ SECTION_HEADINGS = {
         "지원서류", "인재영입 프로세스", "채용 절차", "이력서는 이렇게 작성하시는 걸 추천해요",
         "토스로의 합류여정",
     ),
+    "essay": (
+        "자기소개서 문항", "자기 소개서 문항", "자소서 문항", "지원서 문항", "에세이 문항",
+        "지원서 질문", "자기소개서 질문", "작성 문항", "지원 시 작성해 주세요", "지원 시 작성해주세요",
+        "Essay Questions", "Application Questions", "Written Questions",
+    ),
+    "assignment": (
+        "사전과제", "사전 과제", "과제 전형", "직무 과제", "디자인 과제", "디자인 테스트",
+        "실무 과제", "과제 안내", "제출 과제", "과제 제출", "사전 테스트", "Assignment",
+        "Take-home Assignment", "Take Home Assignment", "Design Test", "Task", "Practical Test",
+    ),
 }
 SECTION_HEADING_VALUES = tuple(
     heading for headings in SECTION_HEADINGS.values() for heading in headings
@@ -91,7 +105,10 @@ SECTION_HEADING_VALUES = tuple(
 SECTION_TITLE_PATTERN = "|".join(
     sorted((re.escape(value).replace(r"\ ", r"\s*") for value in SECTION_HEADING_VALUES), key=len, reverse=True)
 )
-SECTION_TITLE_RE = re.compile(rf"^\[?\s*(?:{SECTION_TITLE_PATTERN})\s*\]?$", re.I)
+SECTION_TITLE_RE = re.compile(
+    rf"^\s*[\[(]?\s*(?:{SECTION_TITLE_PATTERN})\s*(?:\([^)]*\))?\s*[:：]?\s*[\])]?\s*$",
+    re.I,
+)
 INLINE_SECTION_RE = re.compile(rf"\[\s*(?:{SECTION_TITLE_PATTERN})\s*\]|(?:{SECTION_TITLE_PATTERN})", re.I)
 DECORATION_ONLY_RE = re.compile(r"^[\sㆍ•·\-–—😉❤❤️♡]+$")
 COMPACT_BULLET_RE = re.compile(r"^[ㆍ•·]\s*(\S.*)$")
@@ -100,6 +117,11 @@ RESUME_GUIDANCE_RE = re.compile(
     r"(?:이력서|지원서).*?(?:작성|기재)|"
     r"개인\s*인적\s*사항.*?(?:시기|기재)|"
     r"학력.*?대외활동.*?인턴.*?(?:시기|작성|기재)",
+    re.I,
+)
+ESSAY_SUBMISSION_ONLY_RE = re.compile(
+    r"^(?:(?:국문\s*)?이력서\s*(?:및|와|,)?\s*)?(?:자유\s*양식\s*)?"
+    r"자기\s*소개서\s*(?:제출|첨부|파일)?(?:해\s*주세요|필수)?[.!]?$",
     re.I,
 )
 MIN_RENDER_REPEAT_BLOCKS = 6
@@ -443,7 +465,15 @@ def _walk_blocks(node: Tag) -> tuple[list[ContentBlock], bool]:
             line_start = text.rfind("\n", 0, match.start()) + 1
             line_end = text.find("\n", match.end())
             line = text[line_start : line_end if line_end >= 0 else len(text)]
-            if _bullet_text(line) is None:
+            matched_heading = clean_text(match.group(0)).strip("[]() ")
+            assignment_heading = any(
+                re.fullmatch(pattern, matched_heading, re.I)
+                for pattern in _heading_patterns("assignment")
+            )
+            ambiguous_short_heading = matched_heading.lower() in {"preferred"} or assignment_heading
+            if _bullet_text(line) is None and (
+                not ambiguous_short_heading or SECTION_TITLE_RE.fullmatch(line)
+            ):
                 matches.append(match)
         if not matches:
             return [("content", text)]
@@ -760,12 +790,58 @@ def _extract_section(blocks: list[ContentBlock], heading_patterns: list[str], ma
     return _join_complete_lines(output, max_chars)
 
 
-def extract_target_audience(blocks: list[ContentBlock]) -> str:
-    return _extract_section(
-        blocks,
-        [r"자격\s*요건", r"지원\s*자격", r"지원\s*대상", r"이런\s*분", r"필수\s*사항", r"지원자격"],
-        max_chars=1200,
-    )
+def _has_section(blocks: list[ContentBlock], section: str) -> bool:
+    pattern = re.compile("|".join(_heading_patterns(section)), re.I)
+    return any(block.kind.startswith("heading") and pattern.search(block.text) for block in blocks)
+
+
+def extract_target_audience(blocks: list[ContentBlock], content_type: str) -> str:
+    if content_type == "채용공고":
+        return ""
+    return _extract_section(blocks, _heading_patterns("audience"), max_chars=1200)
+
+
+def extract_qualifications(blocks: list[ContentBlock], content_type: str) -> str:
+    if content_type != "채용공고":
+        return ""
+    return _extract_section(blocks, _heading_patterns("audience"), max_chars=1800)
+
+
+def extract_preferred_qualifications(blocks: list[ContentBlock]) -> str:
+    return _extract_section(blocks, _heading_patterns("preferred"), max_chars=1800)
+
+
+def extract_essay_questions(blocks: list[ContentBlock]) -> str:
+    value = _extract_section(blocks, _heading_patterns("essay"), max_chars=1800)
+    lines = [line for line in value.splitlines() if line]
+    if lines and all(ESSAY_SUBMISSION_ONLY_RE.fullmatch(line) for line in lines):
+        return ""
+    return value
+
+
+def extract_pre_assignment(blocks: list[ContentBlock]) -> str:
+    # Only an explicit section starts extraction. Incidental mentions in work
+    # history, portfolios, or a generic hiring-process sentence are ignored.
+    heading_re = re.compile("|".join(_heading_patterns("assignment")), re.I)
+    output: list[str] = []
+    collecting = False
+    first_heading = ""
+    for block in blocks:
+        if block.kind.startswith("heading"):
+            if not collecting and heading_re.search(block.text):
+                collecting = True
+                first_heading = clean_text(block.text)
+                continue
+            if collecting and not output and heading_re.search(block.text):
+                if clean_text(block.text) != first_heading:
+                    output.append(block.text)
+                    continue
+            if collecting:
+                break
+            continue
+        if collecting and block.text:
+            output.append(block.text)
+    return _join_complete_lines(output, 1800)
 
 
 def extract_key_duties(blocks: list[ContentBlock], content_type: str) -> str:
@@ -782,6 +858,29 @@ def extract_benefits(blocks: list[ContentBlock]) -> str:
         blocks,
         _heading_patterns("benefits") + [r"활동비"],
         max_chars=1200,
+    )
+
+
+def _structured_sections(blocks: list[ContentBlock], content_type: str) -> dict[str, str]:
+    return {
+        "key_duties": extract_key_duties(blocks, content_type),
+        "target_audience": extract_target_audience(blocks, content_type),
+        "qualifications": extract_qualifications(blocks, content_type),
+        "preferred_qualifications": extract_preferred_qualifications(blocks),
+        "essay_questions": extract_essay_questions(blocks),
+        "pre_assignment": extract_pre_assignment(blocks),
+    }
+
+
+def _structured_sections_are_consistent(
+    blocks: list[ContentBlock], sections: dict[str, str]
+) -> bool:
+    body_lines = {clean_text(block.text) for block in blocks if block.text}
+    return all(
+        any(body_line == clean_text(line) or body_line.startswith(clean_text(line)) for body_line in body_lines)
+        for value in sections.values()
+        for line in value.splitlines()
+        if clean_text(line)
     )
 
 
@@ -862,6 +961,60 @@ def compute_hash(record_data: dict[str, object]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _refresh_content_hash(record: PostRecord) -> None:
+    record.content_hash = compute_hash(
+        {
+            "post_id": record.post_id,
+            "title": record.title,
+            "content_type": record.content_type,
+            "site_categories": record.site_categories,
+            "organization": record.organization,
+            "role_or_program": record.role_or_program,
+            "design_fields": record.design_fields,
+            "experience_class": record.experience_class,
+            "experience_raw": record.experience_raw,
+            "employment_types": record.employment_types,
+            "target_audience": record.target_audience,
+            "location": record.location,
+            "key_duties": record.key_duties,
+            "qualifications": record.qualifications,
+            "preferred_qualifications": record.preferred_qualifications,
+            "essay_questions": record.essay_questions,
+            "pre_assignment": record.pre_assignment,
+            "benefits_prize": record.benefits_prize,
+            "deadline": record.deadline,
+            "activity_period": record.activity_period,
+            "published_date": record.published_date,
+            "status": record.status,
+            "apply_url": record.apply_url,
+            "collection_status": record.collection_status,
+            "quality_reasons": record.quality_reasons,
+            "body_blocks": [(b.kind, b.text) for b in record.body_blocks],
+        }
+    )
+
+
+def _quality_reasons(
+    *, title: str, content_type: str, blocks: list[ContentBlock], had_images: bool
+) -> dict[str, bool]:
+    sections = _structured_sections(blocks, content_type)
+    body_text = _all_text(blocks)
+    return {
+        "suspicious_title": title == "제목 미기재" or bool(SECTION_TITLE_RE.fullmatch(title)),
+        "missing_body": not blocks,
+        "missing_job_duties": content_type == "채용공고" and not sections["key_duties"],
+        "image_only_content": had_images and len(body_text) < 300,
+        "unresolved_repetition": _has_unresolved_repetition(blocks),
+        "empty_qualifications_section": _has_section(blocks, "audience") and not (
+            sections["qualifications"] or sections["target_audience"]
+        ),
+        "empty_preferred_section": _has_section(blocks, "preferred") and not sections["preferred_qualifications"],
+        "empty_essay_questions_section": _has_section(blocks, "essay") and not sections["essay_questions"],
+        "empty_pre_assignment_section": _has_section(blocks, "assignment") and not sections["pre_assignment"],
+        "inconsistent_structured_sections": not _structured_sections_are_consistent(blocks, sections),
+    }
+
+
 def parse_post_html(
     html: str, source_url: str, fallback_categories: list[str] | None = None
 ) -> PostRecord:
@@ -878,8 +1031,9 @@ def parse_post_html(
         title, categories, body_text, content_type
     )
     employment_types = extract_employment_types(title, body_text, content_type)
-    target_audience = extract_target_audience(body_blocks)
-    key_duties = extract_key_duties(body_blocks, content_type)
+    sections = _structured_sections(body_blocks, content_type)
+    target_audience = sections["target_audience"]
+    key_duties = sections["key_duties"]
     # Avoid false positives from company introductions, benefits, and related
     # content: role/title and the actual duties are the authoritative signals.
     design_fields = detect_design_fields(title, key_duties)
@@ -893,18 +1047,9 @@ def parse_post_html(
         raise ValueError(f"인디스워크 공고 ID를 URL에서 찾을 수 없습니다: {source_url}")
     post_id = post_match.group(1)
 
-    suspicious_title = title == "제목 미기재" or bool(SECTION_TITLE_RE.fullmatch(title))
-    missing_body = not body_blocks
-    missing_job_duties = content_type == "채용공고" and not key_duties
-    image_only_content = had_images and len(body_text) < 300
-    unresolved_repetition = _has_unresolved_repetition(body_blocks)
-    quality_reasons = {
-        "suspicious_title": suspicious_title,
-        "missing_body": missing_body,
-        "missing_job_duties": missing_job_duties,
-        "image_only_content": image_only_content,
-        "unresolved_repetition": unresolved_repetition,
-    }
+    quality_reasons = _quality_reasons(
+        title=title, content_type=content_type, blocks=body_blocks, had_images=had_images
+    )
     collection_status = (
         "검토 필요"
         if any(quality_reasons.values())
@@ -925,6 +1070,10 @@ def parse_post_html(
         target_audience=target_audience,
         location=location,
         key_duties=key_duties,
+        qualifications=sections["qualifications"],
+        preferred_qualifications=sections["preferred_qualifications"],
+        essay_questions=sections["essay_questions"],
+        pre_assignment=sections["pre_assignment"],
         benefits_prize=benefits,
         deadline=deadline,
         activity_period=activity_period,
@@ -935,29 +1084,7 @@ def parse_post_html(
         quality_reasons=quality_reasons,
         body_blocks=body_blocks,
     )
-    record.content_hash = compute_hash(
-        {
-            "title": record.title,
-            "content_type": record.content_type,
-            "site_categories": record.site_categories,
-            "organization": record.organization,
-            "role_or_program": record.role_or_program,
-            "design_fields": record.design_fields,
-            "experience_class": record.experience_class,
-            "experience_raw": record.experience_raw,
-            "employment_types": record.employment_types,
-            "target_audience": record.target_audience,
-            "location": record.location,
-            "key_duties": record.key_duties,
-            "benefits_prize": record.benefits_prize,
-            "deadline": record.deadline,
-            "activity_period": record.activity_period,
-            "published_date": record.published_date,
-            "status": record.status,
-            "apply_url": record.apply_url,
-            "body_blocks": [(b.kind, b.text) for b in record.body_blocks],
-        }
-    )
+    _refresh_content_hash(record)
     return record
 
 
@@ -992,18 +1119,21 @@ def parse_post_html_records(
         split_record.role_or_program = role_title
         split_record.body_blocks = blocks
         split_record.design_fields = detect_design_fields(role_title, segment_text)
-        split_record.key_duties = extract_key_duties(blocks, "채용공고")
-        split_record.target_audience = extract_target_audience(blocks)
+        sections = _structured_sections(blocks, "채용공고")
+        for field, value in sections.items():
+            setattr(split_record, field, value)
         segment_employment = extract_employment_types(role_title, segment_text, "채용공고")
         if segment_employment:
             split_record.employment_types = segment_employment
-        split_record.content_hash = compute_hash(
-            {
-                "post_id": split_record.post_id,
-                "title": split_record.title,
-                "body_blocks": [(block.kind, block.text) for block in blocks],
-                "design_fields": split_record.design_fields,
-            }
+        split_record.quality_reasons = _quality_reasons(
+            title=split_record.title,
+            content_type="채용공고",
+            blocks=blocks,
+            had_images=False,
         )
+        split_record.collection_status = (
+            "검토 필요" if any(split_record.quality_reasons.values()) else "정상"
+        )
+        _refresh_content_hash(split_record)
         records.append(split_record)
     return records

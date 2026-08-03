@@ -13,6 +13,17 @@ from .models import ContentBlock, PostRecord
 
 LOGGER = logging.getLogger(__name__)
 NOTION_BASE_URL = "https://api.notion.com/v1"
+APPLICATION_SECTION_PROPERTIES = {
+    "자격요건": {"rich_text": {}},
+    "우대사항": {"rich_text": {}},
+    "자소서 문항": {"rich_text": {}},
+    "사전과제": {"rich_text": {}},
+}
+REQUIRED_SYNC_PROPERTIES = (
+    "주요 업무·활동",
+    "지원 대상",
+    *APPLICATION_SECTION_PROPERTIES.keys(),
+)
 
 
 def extract_notion_id(value: str) -> str:
@@ -39,7 +50,20 @@ def extract_notion_id(value: str) -> str:
 def _rich_text(text: str, link: str | None = None) -> list[dict[str, Any]]:
     if not text:
         return []
-    chunks = [text[i : i + 1900] for i in range(0, len(text), 1900)]
+    chunks: list[str] = []
+    remaining = text
+    while remaining:
+        if len(remaining) <= 1900:
+            chunks.append(remaining)
+            break
+        boundary = max(
+            remaining.rfind("\n", 0, 1901),
+            remaining.rfind(" ", 0, 1901),
+            remaining.rfind(". ", 0, 1901) + 1,
+        )
+        boundary = boundary if boundary >= 1 else 1900
+        chunks.append(remaining[:boundary])
+        remaining = remaining[boundary:].lstrip()
     output: list[dict[str, Any]] = []
     for chunk in chunks:
         item: dict[str, Any] = {"type": "text", "text": {"content": chunk}}
@@ -137,6 +161,7 @@ def database_schema() -> dict[str, Any]:
             }
         },
         "지원 대상": {"rich_text": {}},
+        **APPLICATION_SECTION_PROPERTIES,
         "근무·활동 지역": {"rich_text": {}},
         "주요 업무·활동": {"rich_text": {}},
         "혜택·상금": {"rich_text": {}},
@@ -275,6 +300,47 @@ class NotionClient:
     def retrieve_data_source(self, data_source_id: str) -> dict[str, Any]:
         return self._request("GET", f"/data_sources/{extract_notion_id(data_source_id)}")
 
+    def validate_sync_schema(self, data_source_id: str) -> None:
+        properties = self.retrieve_data_source(data_source_id).get("properties", {})
+        missing = [name for name in REQUIRED_SYNC_PROPERTIES if name not in properties]
+        wrong_type = [
+            name
+            for name in REQUIRED_SYNC_PROPERTIES
+            if name in properties and properties[name].get("type") != "rich_text"
+        ]
+        if missing or wrong_type:
+            details = []
+            if missing:
+                details.append("누락: " + ", ".join(missing))
+            if wrong_type:
+                details.append("타입 불일치: " + ", ".join(wrong_type))
+            raise RuntimeError(
+                "필수 Notion 속성 검증 실패 (" + "; ".join(details) + "). "
+                "GitHub Actions의 Migrate Notion Schema workflow를 먼저 실행하세요."
+            )
+
+    def migrate_application_schema(self, data_source_id: str) -> tuple[list[str], list[str]]:
+        source_id = extract_notion_id(data_source_id)
+        properties = self.retrieve_data_source(source_id).get("properties", {})
+        existing = [name for name in APPLICATION_SECTION_PROPERTIES if name in properties]
+        wrong_type = [
+            name for name in existing if properties[name].get("type") != "rich_text"
+        ]
+        if wrong_type:
+            raise RuntimeError("기존 Notion 속성 타입이 rich_text가 아닙니다: " + ", ".join(wrong_type))
+        missing = {
+            name: definition
+            for name, definition in APPLICATION_SECTION_PROPERTIES.items()
+            if name not in properties
+        }
+        if missing:
+            self._request("PATCH", f"/data_sources/{source_id}", json={"properties": missing})
+        final_properties = self.retrieve_data_source(source_id).get("properties", {})
+        unverified = [name for name in APPLICATION_SECTION_PROPERTIES if name not in final_properties]
+        if unverified:
+            raise RuntimeError("Notion 스키마 최종 확인 실패: " + ", ".join(unverified))
+        return list(missing), existing
+
     def query_by_post_id(self, data_source_id: str, post_id: str) -> dict[str, Any] | None:
         payload = {
             "filter": {
@@ -314,6 +380,7 @@ class NotionClient:
 
     def _record_properties(self, record: PostRecord, *, changed: bool) -> dict[str, Any]:
         today = date.today().isoformat()
+        is_job = record.content_type == "채용공고"
         return {
             "공고명": {"title": _rich_text(record.title[:1900])},
             "콘텐츠 유형": {"select": {"name": record.content_type}},
@@ -330,9 +397,13 @@ class NotionClient:
             "고용형태": {
                 "multi_select": [{"name": value} for value in record.employment_types]
             },
-            "지원 대상": {"rich_text": _rich_text(record.target_audience[:1800])},
+            "지원 대상": {"rich_text": _rich_text("") if is_job else _rich_text(record.target_audience)},
+            "자격요건": {"rich_text": _rich_text(record.qualifications) if is_job else []},
+            "우대사항": {"rich_text": _rich_text(record.preferred_qualifications)},
+            "자소서 문항": {"rich_text": _rich_text(record.essay_questions)},
+            "사전과제": {"rich_text": _rich_text(record.pre_assignment)},
             "근무·활동 지역": {"rich_text": _rich_text(record.location[:1800])},
-            "주요 업무·활동": {"rich_text": _rich_text(record.key_duties[:1800])},
+            "주요 업무·활동": {"rich_text": _rich_text(record.key_duties)},
             "혜택·상금": {"rich_text": _rich_text(record.benefits_prize[:1800])},
             "마감일": {"date": {"start": record.deadline} if record.deadline else None},
             "활동 기간": {"rich_text": _rich_text(record.activity_period[:1800])},
