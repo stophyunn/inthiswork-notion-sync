@@ -18,3 +18,8 @@ def test_dry_run_preview_explicitly_marks_truncated_body_blocks():
     assert preview["body_blocks_omitted"] == 2
     assert len(preview["body_blocks_preview"]) == 8
     assert preview["body_blocks_last"] == {"kind": "paragraph", "text": "블록 9"}
+    for field in (
+        "key_duties", "qualifications", "preferred_qualifications",
+        "essay_questions", "pre_assignment", "target_audience",
+    ):
+        assert field in preview

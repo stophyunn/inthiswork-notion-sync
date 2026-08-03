@@ -49,6 +49,10 @@ def main() -> None:
         if settings.dry_run
         else NotionClient(settings.notion_token, settings.notion_api_version)
     )
+    if notion is not None:
+        # Dry runs deliberately avoid Notion. Real writes fail before scraping
+        # rather than silently dropping structured fields from the payload.
+        notion.validate_sync_schema(settings.notion_data_source_id)
 
     urls = scraper.discover_post_urls(max_pages=settings.list_page_limit())
     if notion is not None and settings.sync_mode == "recent":
@@ -122,7 +126,8 @@ def main() -> None:
                     counters["created"] += 1
                 else:
                     changed = notion.existing_hash(existing) != record.content_hash
-                    notion.update_record(existing, record, changed=changed)
+                    if changed:
+                        notion.update_record(existing, record, changed=True)
                     counters["updated" if changed else "unchanged"] += 1
         except SiteNotFoundError:
             LOGGER.warning("원문이 사라졌거나 404입니다: %s", url)

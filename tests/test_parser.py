@@ -1,7 +1,7 @@
 import pytest
 from bs4 import BeautifulSoup
 
-from src.parser import parse_post_html
+from src.parser import parse_post_html, parse_post_html_records
 
 
 JOB_HTML = """
@@ -146,7 +146,8 @@ def test_tinkware_live_shape_prefers_metadata_and_splits_flat_sections():
     assert record.title == "팅크웨어｜아이나비 브랜드 콘텐츠 디자인 (경력)"
     assert len(record.key_duties.splitlines()) == 6
     assert "브랜드 콘텐츠 디자인" in record.key_duties
-    assert "관련 직무 경력 3년 이상" in record.target_audience
+    assert record.target_audience == ""
+    assert "관련 직무 경력 3년 이상" in record.qualifications
     assert record.employment_types == ["정규직"]
     assert record.experience_raw == "경력 3년 이상"
     assert all("오늘 핫한 공고" not in block.text for block in record.body_blocks)
@@ -333,9 +334,10 @@ def test_tossbank_complete_repeated_body_keeps_one_full_render():
     assert record.employment_types == ["계약직"]
     assert record.experience_class == "신입"
     assert record.key_duties == "\n".join(duties)
-    assert qualification in record.target_audience
+    assert record.target_audience == ""
+    assert qualification in record.qualifications
     assert all(duty in texts for duty in record.key_duties.splitlines())
-    assert all(line in texts for line in record.target_audience.splitlines())
+    assert all(line in texts for line in record.qualifications.splitlines())
     assert record.body_blocks[-1].text != "합류하면 함께 할 업무예요"
 
     single_soup = BeautifulSoup(html, "html.parser")
@@ -492,7 +494,7 @@ def test_dmil_live_shape_ignores_publish_year_and_non_duty_design_terms():
     assert record.experience_raw == ""
     assert record.experience_class == "확인 필요"
     assert "SNS 콘텐츠 및 광고 소재 디자인" in record.key_duties
-    assert "포트폴리오 제출 가능자" in record.target_audience
+    assert "포트폴리오 제출 가능자" in record.qualifications
     assert record.benefits_prize == "장비 지원"
     assert record.design_fields == ["콘텐츠"]
     assert all("함께 보면 좋은" not in block.text for block in record.body_blocks)
@@ -515,7 +517,7 @@ def test_natural_headings_and_heading_attached_to_bullet_are_split():
         "이런 일을 함께해요", "이런 분을 모시고 있어요", "디밀은 이렇게 일해요"
     ]
     assert record.key_duties == "자사 브랜드 인스타그램 콘텐츠 및 SNS 비주얼을 디자인해요."
-    assert record.target_audience == "포트폴리오 제출 가능자"
+    assert record.qualifications == "포트폴리오 제출 가능자"
     assert record.benefits_prize == "장비 지원"
 
 
@@ -533,7 +535,7 @@ def test_successful_duplicate_removal_is_normal_and_removes_decorations():
     record = parse_post_html(html, "https://inthiswork.com/archives/500002")
 
     assert record.key_duties == "모바일 게임 2D 아트 제작 보조"
-    assert record.target_audience == "2D 아트 포트폴리오 보유자"
+    assert record.qualifications == "2D 아트 포트폴리오 보유자"
     assert record.employment_types == ["아르바이트"]
     assert sum(block.text == "모바일 게임 2D 아트 제작 보조" for block in record.body_blocks) == 1
     assert all(block.text not in {"😉", "지원하러 가기"} for block in record.body_blocks)
@@ -559,7 +561,124 @@ def test_snow_natural_sections_ignore_future_regular_job_and_parse_split_deadlin
 
     assert "AI 기반 캐릭터 채팅 서비스 UI/UX 기획 및 디자인 작업 지원" in record.key_duties
     assert "AI 서비스 콘텐츠 및 데이터 구성 지원" in record.key_duties
-    assert record.target_audience == "UI/UX 포트폴리오 제출 가능자\n향후 정규직 공고에 지원하더라도 별도 가산점은 없습니다."
+    assert record.target_audience == ""
+    assert record.qualifications == "UI/UX 포트폴리오 제출 가능자\n향후 정규직 공고에 지원하더라도 별도 가산점은 없습니다."
     assert record.employment_types == ["인턴"]
     assert record.deadline == "2026-08-12"
     assert record.collection_status == "정상"
+
+
+def test_application_sections_are_bounded_ordered_and_in_final_body():
+    record = parse_post_html(
+        _fixture("application_sections"), "https://inthiswork.com/archives/600001"
+    )
+    texts = [block.text for block in record.body_blocks]
+
+    assert record.key_duties == "Design product flows\nCreate prototypes"
+    assert record.qualifications == "Use Figma fluently\nHave two years of experience"
+    assert record.preferred_qualifications == "Motion design experience"
+    assert record.essay_questions == (
+        "Why do you want to join?\nDescribe your most memorable project."
+    )
+    assert record.pre_assignment == "Submit a five-page redesign proposal as a PDF."
+    assert record.target_audience == ""
+    for value in (
+        record.key_duties,
+        record.qualifications,
+        record.preferred_qualifications,
+        record.essay_questions,
+        record.pre_assignment,
+    ):
+        assert all(line in texts for line in value.splitlines())
+    assert "Motion design experience" not in record.qualifications
+    assert "Why do you want to join?" not in record.qualifications
+    assert "Submit a five-page" not in record.key_duties
+    assert record.collection_status == "정상"
+
+
+def test_tossbank_natural_qualification_and_preferred_headings_are_separate():
+    record = parse_post_html(
+        _fixture("tossbank_visual_design_assistant_live"),
+        "https://inthiswork.com/archives/378352",
+        fallback_categories=["신입/인턴"],
+    )
+    assert "Figma" in record.qualifications
+    assert "모션/3D" in record.preferred_qualifications
+    assert "모션/3D" not in record.qualifications
+    assert record.target_audience == ""
+
+
+def test_submission_and_incidental_assignment_mentions_do_not_fill_sections():
+    record = parse_post_html(
+        _fixture("application_false_positive"), "https://inthiswork.com/archives/600002"
+    )
+    assert record.essay_questions == ""
+    assert record.pre_assignment == ""
+    assert record.quality_reasons["empty_essay_questions_section"] is True
+    assert "학교 과제" in "\n".join(block.text for block in record.body_blocks)
+
+
+def test_explicit_assignment_heading_keeps_process_assignment_text():
+    html = """
+    <html><head><meta property="og:title" content="Example｜디자이너 채용"></head><body>
+    <article><h3>주요 업무</h3><p>제품을 디자인합니다.</p>
+    <h3>사전과제</h3><p>과제 전형</p></article></body></html>
+    """
+    record = parse_post_html(html, "https://inthiswork.com/archives/600003")
+    assert record.pre_assignment == "과제 전형"
+
+
+def test_empty_optional_sections_are_quality_reasons_but_absence_is_not():
+    empty = parse_post_html(
+        """<html><head><meta property='og:title' content='Example｜디자이너 채용'></head>
+        <body><article><h3>주요 업무</h3><p>제품을 디자인합니다.</p><h3>우대사항</h3></article></body></html>""",
+        "https://inthiswork.com/archives/600004",
+    )
+    normal = parse_post_html(
+        """<html><head><meta property='og:title' content='Example｜디자이너 채용'></head>
+        <body><article><h3>주요 업무</h3><p>제품을 디자인합니다.</p></article></body></html>""",
+        "https://inthiswork.com/archives/600005",
+    )
+    assert empty.quality_reasons["empty_preferred_section"] is True
+    assert empty.collection_status == "검토 필요"
+    assert normal.collection_status == "정상"
+
+
+def test_new_structured_fields_change_content_hash():
+    original = _fixture("application_sections")
+    changed = original.replace("Motion design experience", "3D design experience")
+    first = parse_post_html(original, "https://inthiswork.com/archives/600006")
+    second = parse_post_html(changed, "https://inthiswork.com/archives/600006")
+    assert first.content_hash != second.content_hash
+
+
+def test_non_job_keeps_target_audience_and_clears_qualifications():
+    html = """
+    <html><head><meta property="og:title" content="청년 디자인 공모전"></head><body>
+    <article><h3>공모 주제</h3><p>지속 가능한 도시 디자인</p>
+    <h3>지원 대상</h3><p>전국 대학생</p></article></body></html>
+    """
+    record = parse_post_html(html, "https://inthiswork.com/archives/600007")
+    assert record.content_type == "공모전"
+    assert record.key_duties == "지속 가능한 도시 디자인"
+    assert record.target_audience == "전국 대학생"
+    assert record.qualifications == ""
+
+
+def test_multi_role_recomputes_sections_without_copying_ambiguous_common_questions():
+    html = """
+    <html><head><meta property="og:title" content="Acme｜디자인 직무 채용"></head><body><article>
+    <h2>UI/UX 디자이너</h2><h3>주요 업무</h3><p>앱 화면을 설계합니다.</p>
+    <h3>자격요건</h3><p>Figma 사용 경험</p>
+    <h2>그래픽 디자이너</h2><h3>주요 업무</h3><p>브랜드 그래픽을 제작합니다.</p>
+    <h3>자격요건</h3><p>Illustrator 사용 경험</p>
+    <h3>자소서 문항</h3><p>지원 동기를 작성해 주세요.</p>
+    </article></body></html>
+    """
+    records = parse_post_html_records(html, "https://inthiswork.com/archives/600008")
+    assert len(records) == 2
+    assert records[0].qualifications == "Figma 사용 경험"
+    assert records[1].qualifications == "Illustrator 사용 경험"
+    assert "Illustrator" not in records[0].qualifications
+    assert records[0].essay_questions == ""
+    assert records[1].essay_questions == "지원 동기를 작성해 주세요."

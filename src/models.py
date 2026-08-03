@@ -37,6 +37,10 @@ class PostRecord:
     target_audience: str = ""
     location: str = ""
     key_duties: str = ""
+    qualifications: str = ""
+    preferred_qualifications: str = ""
+    essay_questions: str = ""
+    pre_assignment: str = ""
     benefits_prize: str = ""
     deadline: str | None = None
     activity_period: str = ""
