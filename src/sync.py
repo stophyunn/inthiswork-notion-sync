@@ -14,6 +14,7 @@ from .http_client import (
 )
 from .models import PostRecord
 from .notion_api import NotionClient
+from .parser import heading_candidates
 from .scraper import InThisWorkScraper
 
 LOGGER = logging.getLogger(__name__)
@@ -27,6 +28,8 @@ def _dry_run_preview(record: PostRecord) -> dict[str, object]:
     preview["body_blocks_omitted"] = max(0, len(blocks) - 8)
     preview["body_blocks_preview"] = blocks[:8]
     preview["body_blocks_last"] = blocks[-1] if blocks else None
+    if record.quality_reasons.get("missing_job_duties"):
+        preview["heading_candidates"] = heading_candidates(record.body_blocks)
     return preview
 
 
