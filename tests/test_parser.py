@@ -1,4 +1,5 @@
 import pytest
+from bs4 import BeautifulSoup
 
 from src.parser import parse_post_html
 
@@ -264,18 +265,86 @@ def test_orphan_duplicate_heading_is_removed_after_render_deduplication():
 
 
 def test_repeated_meaningful_body_sequence_requires_review():
+    repeated = [
+        "브랜드 캠페인의 핵심 비주얼을 다양한 채널 규격에 맞춰 제작하고 관리해요.",
+        "마케팅 목표와 사용자 맥락을 반영해 디지털 콘텐츠의 완성도를 지속적으로 개선해요.",
+        "유관 부서와 긴밀하게 협업하며 일관된 브랜드 경험을 위한 디자인 기준을 운영해요.",
+        "프로젝트 결과를 정리하고 다음 제작 과정에 활용할 수 있도록 작업 자산을 체계화해요.",
+    ]
     html = """
     <html><head><meta property="og:title" content="회사｜콘텐츠 디자이너 채용" /></head>
     <body><article><div class="fusion-content-tb"><h2>수행 업무</h2>
-    <p>브랜드 영상 제작</p><p>마케팅 콘텐츠 편집</p>
-    <p>브랜드 영상 제작</p><p>마케팅 콘텐츠 편집</p>
+    {body}
     </div></article></body></html>
-    """
+    """.format(body="".join(f"<p>{line}</p>" for line in repeated * 2))
 
     record = parse_post_html(html, "https://inthiswork.com/archives/600006")
 
     assert record.collection_status == "검토 필요"
     assert record.quality_reasons["unresolved_repetition"] is True
+
+
+def test_short_accidental_sequence_repetition_is_preserved_without_review():
+    html = """
+    <html><head><meta property="og:title" content="회사｜콘텐츠 디자이너 채용" /></head>
+    <body><article><div class="fusion-content-tb"><h2>수행 업무</h2>
+    <p>검토</p><p>협업</p><p>검토</p><p>협업</p>
+    </div></article></body></html>
+    """
+
+    record = parse_post_html(html, "https://inthiswork.com/archives/600009")
+
+    assert [block.text for block in record.body_blocks].count("검토") == 2
+    assert [block.text for block in record.body_blocks].count("협업") == 2
+    assert record.quality_reasons["unresolved_repetition"] is False
+    assert record.collection_status == "정상"
+
+
+def test_tossbank_complete_repeated_body_keeps_one_full_render():
+    html = _fixture("tossbank_visual_design_assistant_live")
+    source_url = "https://inthiswork.com/archives/600010"
+
+    record = parse_post_html(html, source_url, fallback_categories=["신입/인턴"])
+
+    duties = [
+        "브랜딩/마케팅 콘텐츠를 디자인해요.",
+        "이미지와 PPT 제작을 서포트해요.",
+        "이벤트 디자인 업무를 서포트해요.",
+    ]
+    texts = [block.text for block in record.body_blocks]
+    assert all(text in texts for text in duties)
+    assert all(texts.count(text) == 1 for text in duties)
+    assert "Figma, Photoshop, Illustrator를 활용할 수 있는 분" in texts
+    assert "계약기간은 3개월이에요." in texts
+    assert "지원하기" not in texts
+    assert len(texts) == len(set((block.kind, block.text) for block in record.body_blocks))
+    assert [texts.index(text) for text in duties] == sorted(texts.index(text) for text in duties)
+    assert record.quality_reasons["unresolved_repetition"] is False
+    assert record.collection_status == "정상"
+    assert record.employment_types == ["계약직"]
+    assert record.key_duties == "\n".join(duties)
+    assert record.target_audience == "Figma, Photoshop, Illustrator를 활용할 수 있는 분"
+    assert all(duty in texts for duty in record.key_duties.splitlines())
+    assert record.target_audience in texts
+
+    single_soup = BeautifulSoup(html, "html.parser")
+    single_soup.select_one(".mobile-render").decompose()
+    single_record = parse_post_html(
+        str(single_soup), source_url, fallback_categories=["신입/인턴"]
+    )
+    assert record.content_hash == single_record.content_hash
+
+
+def test_hyundai_livart_image_only_post_still_requires_review():
+    record = parse_post_html(
+        _fixture("hyundai_livart_378233"),
+        "https://inthiswork.com/archives/378233",
+        fallback_categories=["주니어경력"],
+    )
+
+    assert record.quality_reasons["missing_body"] is True
+    assert record.quality_reasons["image_only_content"] is True
+    assert record.collection_status == "검토 필요"
 
 
 def test_benefits_stop_at_last_complete_line():
