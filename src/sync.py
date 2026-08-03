@@ -89,6 +89,16 @@ def main() -> None:
                     )
 
                 if settings.dry_run:
+                    if record.collection_status == "검토 필요":
+                        active_reasons = [
+                            name for name, active in record.quality_reasons.items() if active
+                        ]
+                        LOGGER.warning(
+                            "dry-run 수집 상태 검토 필요 (URL=%s, ID=%s): %s",
+                            url,
+                            record.post_id,
+                            ", ".join(active_reasons),
+                        )
                     preview = asdict(record)
                     preview["body_blocks"] = [asdict(block) for block in record.body_blocks[:8]]
                     print(json.dumps(preview, ensure_ascii=False, indent=2))
