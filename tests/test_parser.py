@@ -5,6 +5,7 @@ from src.models import ContentBlock
 from src.parser import (
     _quality_reasons,
     _structured_sections_are_consistent,
+    heading_candidates,
     parse_post_html,
     parse_post_html_records,
 )
@@ -713,10 +714,11 @@ def test_eleven_combined_wrappers_do_not_leak_between_sections():
     )
     assert len(record.key_duties.splitlines()) == 5
     assert "브랜드 비주얼을 제작합니다." in record.key_duties
-    assert record.qualifications == "Figma를 사용할 수 있는 분"
-    assert record.preferred_qualifications == "모션 디자인 경험이 있는 분"
+    assert len(record.qualifications.splitlines()) == 6
+    assert len(record.preferred_qualifications.splitlines()) == 5
     assert not any(token in values for token in (
-        ")", "📌", "🎯", "✨", "합류 여정", "포트폴리오", "복리후생"
+        ")", "📌", "🎯", "✨", "합류 여정", "인터뷰", "이력서·포트폴리오 제출 안내",
+        "복지", "성장 지원"
     ))
     assert any(
         block.kind == "paragraph" and block.text == "📌 이런 일을 해요 (주요 업무)"
@@ -745,6 +747,9 @@ def test_snow_live_numbered_roles_split_before_section_extraction():
     assert [record.role_or_program.split(".", 1)[0] for record in records] == ["1", "2", "5"]
     assert all(record.role_or_program in record.title for record in records)
     assert all(record.post_id != "379384-3" for record in records)
+    assert all(record.post_id != "379384-6" for record in records)
+    assert "사진과 동영상 콘텐츠 제작" in _fixture("snow_379384_live_shape")
+    assert "Service &amp; Business &gt; Content Development" in _fixture("snow_379384_live_shape")
     assert "AI 캐릭터 콘텐츠" in records[0].key_duties
     assert "서비스 그래픽 에셋" in records[1].key_duties
     assert "비주얼 콘텐츠" not in records[0].preferred_qualifications
@@ -774,21 +779,46 @@ def test_linqalpha_discards_decorations_and_culture_boundary():
         _fixture("linqalpha_380773_live_shape"),
         "https://inthiswork.com/archives/380773",
     )
-    assert record.key_duties == "데이터 제품의 사용자 경험을 설계합니다."
-    assert record.qualifications == "Figma를 능숙하게 사용하는 분"
-    assert record.preferred_qualifications == "핀테크 제품 경험이 있는 분"
+    assert len(record.key_duties.splitlines()) == 3
+    assert len(record.qualifications.splitlines()) == 2
+    assert record.preferred_qualifications == "금융 제품 경험\nB2B 제품 경험\n디자인 시스템 경험\nAI 제품 경험"
     values = "\n".join((record.key_duties, record.qualifications, record.preferred_qualifications))
-    assert not any(token in values for token in ("!", "❖", "🌟", "문화 및"))
+    assert not any(token in values for token in ("!", "❖", "🌟", "잘 맞", "지적으로 정직"))
+    assert record.collection_status == "정상"
+    assert record.quality_reasons["inconsistent_structured_sections"] is False
 
 
-def test_bytelab_live_strong_paragraph_headings_are_extracted():
+def test_bytelab_live_actual_emoji_headings_are_extracted():
     record = parse_post_html(
         _fixture("bytelab_378607_live_shape"),
         "https://inthiswork.com/archives/378607",
     )
-    assert record.key_duties == "모바일 서비스 UI/UX를 설계합니다."
-    assert record.qualifications == "Figma 기반 포트폴리오가 있는 분"
-    assert record.preferred_qualifications == "디자인 시스템 구축 경험이 있는 분"
+    assert len(record.key_duties.splitlines()) == 3
+    assert len(record.qualifications.splitlines()) == 4
+    assert len(record.preferred_qualifications.splitlines()) == 3
+    values = "\n".join((record.key_duties, record.qualifications, record.preferred_qualifications))
+    assert "성장" not in values
+    assert "합류 여정" not in values
+    assert record.pre_assignment == ""
+    assert record.collection_status == "정상"
+    assert record.quality_reasons["inconsistent_structured_sections"] is False
+
+
+def test_live_heading_candidates_classify_actual_linqalpha_and_bytelab_phrases():
+    blocks = [
+        ContentBlock(kind="paragraph", text="합류하면 아래와 같은 업무를 하게 됩니다!"),
+        ContentBlock(kind="paragraph", text="우리는 이런 분을 찾고 있어요!"),
+        ContentBlock(kind="paragraph", text="이런 경험이 있다면 더 좋아요!"),
+        ContentBlock(kind="paragraph", text="이런 분이면 잘 맞습니다!"),
+        ContentBlock(kind="paragraph", text="📌저희와 함께 하시게 될 일들이에요"),
+        ContentBlock(kind="paragraph", text="😀이런 분을 모시고 싶어요"),
+        ContentBlock(kind="paragraph", text="🌟 이렇게 성장할 수 있어요!"),
+        ContentBlock(kind="paragraph", text="📩 바이트랩 합류 여정 안내드려요"),
+    ]
+    assert [item["section"] for item in heading_candidates(blocks)] == [
+        "duties", "qualifications", "preferred", "boundary",
+        "duties", "qualifications", "boundary", "boundary",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -852,6 +882,8 @@ def test_structured_consistency_rejects_exact_boundaries_urls_roles_and_wrappers
         "채용 전형", "https://example.test/jobs", "2. 비주얼 콘텐츠 디자인 체험형 인턴",
         ")", "포트폴리오로 지원하기", "사전과제로 지원하기",
         "지원 시 직군/직무 설정", "Design > Visual Design",
+        "🤝 합류 여정", "최고의 동료와 함께, 성장에만 집중하세요",
+        "🌟 이렇게 성장할 수 있어요!", "이런 분이면 잘 맞습니다!",
     ):
         if leaked not in {block.text for block in blocks}:
             blocks.append(ContentBlock(kind="paragraph", text=leaked))

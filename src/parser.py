@@ -61,6 +61,9 @@ NOISE_SELECTORS = [
 
 SECTION_HEADINGS = {
     "duties": (
+        "합류하면 아래와 같은 업무를 하게 됩니다",
+        "저희와 함께 하시게 될 일들이에요", "저희와 함께 하게 될 일들이에요",
+        "함께 하시게 될 일들이에요", "함께 하게 될 일들이에요",
         "이런 일을 합니다", "이런 일을 해요", "이런 일을 하게 됩니다", "담당하게 될 일",
         "이런 일을 함께해요", "이런 경험을 할 수 있어요", "이런 업무를 함께 할 예정이에요",
         "이런 업무를 담당해요", "합류하면 함께 할 업무예요", "합류하면 함께할 업무예요",
@@ -70,6 +73,8 @@ SECTION_HEADINGS = {
         "Responsibilities", "What you'll do", "What you will do", "Your role",
     ),
     "audience": (
+        "우리는 이런 분을 찾고 있어요", "우리는 이런 분을 찾습니다",
+        "이런 분을 모시고 싶어요", "이런 분을 모시고 싶습니다",
         "이런 분을 모시고 있어요", "이런 분을 찾고 있어요", "이런 분을 찾습니다",
         "이런 분을 찾아요", "우리가 찾는 분", "이런 분을 기다립니다",
         "이런 분과 함께하고 싶어요", "이런 분과 함께하고 싶습니다", "이런 역량을 가진 분을 찾아요",
@@ -117,6 +122,14 @@ SECTION_BOUNDARY_HEADINGS = (
     "채용 시 마감", "기타 사항", "유의사항", "회사 소개",
     "팀 소개", "포지션 소개", "채용 배경", "지원 시 직군/직무 설정", "직군/직무 설정",
     "포트폴리오로 지원하기", "토스플레이스로의 합류 여정",
+    "이런 분이면 잘 맞습니다", "이런 분이면 잘 맞아요",
+    "이런 분과 잘 맞습니다", "이런 분과 잘 맞아요",
+    "합류 과정", "합류 프로세스", "채용 여정",
+    "최고의 동료와 함께, 성장에만 집중하세요",
+    "최고의 동료와 함께 성장에만 집중하세요", "복지 및 문화",
+    "성장 지원", "성장을 위한 전폭적인 지원",
+    "이렇게 성장할 수 있어요", "이렇게 성장할 수 있습니다",
+    "합류 여정 안내드려요", "바이트랩 합류 여정 안내드려요",
 )
 SECTION_HEADING_VALUES = tuple(
     heading for headings in SECTION_HEADINGS.values() for heading in headings
@@ -130,7 +143,7 @@ SECTION_TITLE_RE = re.compile(
 )
 INLINE_SECTION_RE = re.compile(rf"\[\s*(?:{SECTION_TITLE_PATTERN})\s*\]|(?:{SECTION_TITLE_PATTERN})", re.I)
 DECORATION_ONLY_RE = re.compile(r"^[\sㆍ•·\-–—😉❤❤️♡]+$")
-STRUCTURED_DECORATION_RE = re.compile(r"^[\s\[\](){}:：!！❖🌟📌🎯✨ㆍ•·\-–—]+$")
+STRUCTURED_DECORATION_RE = re.compile(r"^[\s\[\](){}:：!！❖🌟📌🎯✨😀🎆📩🤝🎁ㆍ•·\-–—]+$")
 URL_ONLY_RE = re.compile(r"^(?:https?://|www\.)\S+$", re.I)
 STRUCTURED_LEAK_RE = re.compile(
     r"^(?:사전과제\s*확인하기|※?\s*지원\s*시\s*직군\s*/\s*직무\s*설정|"
@@ -171,7 +184,7 @@ def _heading_patterns(kind: str) -> list[str]:
 
 def _strip_heading_wrapper(text: str) -> str:
     value = clean_text(text)
-    value = re.sub(r"^[\s\[\](){}【】（）：:🌟📌🎯✨❖※!！]+", "", value)
+    value = re.sub(r"^[\s\[\](){}【】（）：:🌟📌🎯✨😀🎆📩🤝🎁❖※!！]+", "", value)
     value = re.sub(r"[\s\[\](){}【】（）：:!！.。]+$", "", value)
     return clean_text(value)
 
@@ -181,21 +194,20 @@ def _exact_section_kind(text: str) -> str | None:
     inner_candidates = re.findall(r"[\(（【\[]\s*([^\)）】\]]{2,50})\s*[\)）】\]]", original)
     candidates = [_strip_heading_wrapper(value) for value in inner_candidates]
     candidates.append(_strip_heading_wrapper(original))
-    for candidate in candidates[:-1]:
+    for candidate in candidates:
+        if not candidate:
+            continue
         for kind in SECTION_HEADINGS:
             if any(re.fullmatch(pattern, candidate, re.I) for pattern in _heading_patterns(kind)):
                 return kind
+        if any(
+            re.fullmatch(re.escape(value).replace(r"\ ", r"\s*"), candidate, re.I)
+            for value in SECTION_BOUNDARY_HEADINGS
+        ):
+            return "boundary"
     candidate = candidates[-1]
     if not candidate:
         return None
-    for kind in SECTION_HEADINGS:
-        if any(re.fullmatch(pattern, candidate, re.I) for pattern in _heading_patterns(kind)):
-            return kind
-    if any(
-        re.fullmatch(re.escape(value).replace(r"\ ", r"\s*"), candidate, re.I)
-        for value in SECTION_BOUNDARY_HEADINGS
-    ):
-        return "boundary"
     if len(candidate) <= 60 and re.fullmatch(
         r".+?(?:디자이너|Designer|디자인\s*직무|디자인\s*팀)(?:는|은)\s*이렇게\s*일해요",
         candidate,
@@ -249,19 +261,44 @@ def _numbered_job_marker(block: ContentBlock) -> re.Match[str] | None:
     return NUMBERED_JOB_MARKER_RE.fullmatch(_strip_heading_wrapper(block.text))
 
 
+def _is_design_numbered_role(role_title: str, blocks: list[ContentBlock]) -> bool:
+    """Classify a numbered role from its title and explicit application path."""
+    title = _strip_heading_wrapper(role_title)
+    lines = [_strip_heading_wrapper(block.text) for block in blocks]
+    if any(re.match(r"^Service\s*&\s*Business\s*>", line, re.I) for line in lines):
+        return False
+    if any(re.match(r"^Design\s*>", line, re.I) for line in lines):
+        return True
+    explicit_design = re.search(
+        r"(?:디자이너|디자인|Designer|Product\s+Design|Visual\s+Design|Graphic\s+Design|"
+        r"UI\s*/?\s*UX\s+Design|BX\s*/?\s*Brand\s+Design|Content\s+Design)",
+        title,
+        re.I,
+    )
+    non_design = re.search(
+        r"(?:기획\s*/?\s*운영|Content\s+Development|Product\s+Development|Marketing|Operation|Planning)",
+        title,
+        re.I,
+    )
+    return bool(explicit_design) and not (
+        non_design and not re.search(r"디자인|디자이너|Design|Designer", title, re.I)
+    )
+
+
 def heading_candidates(blocks: list[ContentBlock]) -> list[dict[str, object]]:
     candidates: list[dict[str, object]] = []
     for index, block in enumerate(blocks):
         if len(block.text) > 100:
             continue
         normalized = _strip_heading_wrapper(block.text)
+        section = _logical_section_kind(blocks, index)
         candidates.append(
             {
                 "index": index,
                 "kind": block.kind,
                 "text": block.text,
                 "normalized": normalized,
-                "section": _logical_section_kind(blocks, index),
+                "section": "qualifications" if section == "audience" else section,
             }
         )
     return candidates
@@ -1337,7 +1374,7 @@ def parse_post_html_records(
         blocks = record.body_blocks[start:end]
         segment_text = _all_text(blocks)
         role_title = blocks[0].text
-        if numbered_markers and not detect_design_fields(role_title, ""):
+        if numbered_markers and not _is_design_numbered_role(role_title, blocks):
             continue
         split_record = deepcopy(record)
         split_record.post_id = f"{record.post_id}-{source_number}"
