@@ -1125,7 +1125,21 @@ def test_gm_design_center_live_qualification_boundaries():
     assert record.organization == "GM테크니컬센터코리아"
     assert record.role_or_program == "2026 디자인센터 가을인턴 모집"
     assert record.content_type == "채용공고"
-    assert record.key_duties == ""
+    assert record.key_duties.splitlines() == [
+        "1. 익스테리어 디자인 :",
+        "GM 브랜드를 위한 혁신적이고 다양한 익스테리어 디자인 비전 개발 및 제안",
+        "2D 스케치, 높은 수준의 렌더링과 AI 툴, 애니메이션을 이용한 비주얼 커뮤니케이션",
+        "3D 디자인 소프트웨어를 활용한 초기 콘셉트 모델링 및 렌더링 (Alias, VRED, Blender 등)",
+        "주어진 일정 내에서 업무를 수행하고, 다른 부서와의 효율적인 협업을 통해 성공적인 디자인 제안 및 혁신적인 솔루션 제시",
+        "2.",
+        "Global Creative Visualization",
+        "(GCV)",
+        "3D Visualization 소프트웨어 및 AI를 이용한 크리에이티브 이미지 및 애니메이션 제작 (예: Maya, Unreal Engine, Blender, Vizcom 등)",
+        "GM 글로벌 팀들과의 협업을 통한 GM 브랜드(Chevrolet, Buick, Cadillac, GMC)의 글로벌 비주얼라이제이션 작업 수행",
+        "차량 디자인 콘셉트를 표현하는 아트 디렉션(Art Direction) 콘셉트와 스토리텔링 기획",
+        "스타일링 감각, 트렌드 리서치, 자신이 생각하는 주제와 내용을 담은 프레젠테이션 제작 및 발표",
+        "디자인센터 내 팀들(디자인, 모델, 디지털 디자인, 프로그램 매니저, CMF 등)과 협력하여 GM 차량 디자인 개발을 위한 비주얼라이제이션 수행",
+    ]
     assert record.qualifications.splitlines() == [
         "모집전공:",
         "익스테리어 디자인 :",
@@ -1158,6 +1172,15 @@ def test_gm_design_center_live_qualification_boundaries():
     assert record.benefits_prize == ""
     assert record.essay_questions == ""
     assert record.pre_assignment == ""
+    assert len(record.key_duties.splitlines()) == 13
+    assert len(record.qualifications.splitlines()) == 14
+    assert len(record.preferred_qualifications.splitlines()) == 11
+    assert len(record.benefits_prize.splitlines()) == 0
+    assert not any(value in record.key_duties for value in (
+        "What You’ll Do", "What you'll do", "Your Skills & Abilities", "공통지원자격",
+        "What Will Give You A Competitive Edge", "How we Hire", "인턴 근무지", "인턴기간",
+        "접수마감",
+    ))
     structured = record.qualifications + "\n" + record.preferred_qualifications
     assert not any(value in structured for value in (
         "Your Skills & Abilities", "공통지원자격", "What Will Give You A Competitive Edge",
@@ -1165,7 +1188,8 @@ def test_gm_design_center_live_qualification_boundaries():
         "8주 Program", "접수마감",
     ))
     assert record.collection_status == "검토 필요"
-    assert record.quality_reasons["missing_job_duties"] is True
+    assert record.quality_reasons["missing_job_duties"] is False
+    assert record.quality_reasons["empty_pre_assignment_section"] is True
     assert record.quality_reasons["inconsistent_structured_sections"] is False
     assert classify_opportunity_scope(record) == "in_scope"
 
@@ -1258,6 +1282,39 @@ def test_live_process_and_conditions_boundaries_stop_preferred_section(boundary)
     )
     record = parse_post_html(html, "https://inthiswork.test/archives/600032")
     assert record.preferred_qualifications == "협업 경험"
+
+
+@pytest.mark.parametrize("heading", [
+    "What you'll do",
+    "What You’ll Do",
+    "What You’ll Do –",
+    "What You‘ll Do",
+    "What Youʼll Do",
+])
+def test_duties_heading_apostrophe_variants_use_paragraph_extraction_path(heading):
+    html = (
+        "<html><head><meta property='og:title' content='Example｜Product Designer 채용'></head>"
+        f"<body><article><p>{heading}</p><p>제품 경험을 설계합니다</p>"
+        "<p>자격 요건</p><p>Figma 활용 능력</p></article></body></html>"
+    )
+    record = parse_post_html(html, "https://inthiswork.test/archives/600033")
+    assert record.key_duties == "제품 경험을 설계합니다"
+    assert record.qualifications == "Figma 활용 능력"
+    assert heading not in record.key_duties + record.qualifications
+    assert "제품 경험을 설계합니다" not in record.qualifications
+    assert "Figma 활용 능력" not in record.key_duties
+
+
+def test_heading_apostrophe_normalization_preserves_structured_body_text():
+    html = (
+        "<html><head><meta property='og:title' content='Example｜Product Designer 채용'></head>"
+        "<body><article><p>What You’ll Do –</p>"
+        "<p>Designer’s workflow를 개선합니다</p>"
+        "<p>자격 요건</p><p>Figma 활용 능력</p></article></body></html>"
+    )
+    record = parse_post_html(html, "https://inthiswork.test/archives/600034")
+    assert record.key_duties == "Designer’s workflow를 개선합니다"
+    assert "Designer's" not in record.key_duties
 
 
 def test_onplanet_mixed_roles_are_safely_excluded_without_isolated_body():
