@@ -6,6 +6,8 @@ from src.parser import (
     _quality_reasons,
     _structured_sections_are_consistent,
     classify_opportunity_scope,
+    determine_status,
+    has_mixed_role_listing,
     heading_candidates,
     parse_post_html,
     parse_post_html_records,
@@ -137,6 +139,90 @@ def test_scope_uses_application_paths_and_handles_mixed_or_design_programs():
     assert classify_opportunity_scope(generic_program) == "non_design_opportunity"
 
 
+def test_eland_museum_mixed_design_and_conservator_has_no_isolated_design_role():
+    record = parse_post_html(
+        _fixture("eland_museum_380915_live_shape"),
+        "https://inthiswork.com/archives/380915",
+    )
+    assert record.content_type == "채용공고"
+    assert "전시기획 디자이너" in record.role_or_program
+    assert "컨서베이터" in record.role_or_program
+    assert record.body_blocks == []
+    assert record.quality_reasons["image_only_content"] is True
+    assert classify_opportunity_scope(record) == "no_isolated_design_role"
+
+
+@pytest.mark.parametrize(
+    "role",
+    [
+        "신사업개발팀 Product Designer",
+        "사용자 연구 기반 UX 디자이너",
+        "디자인 시스템 운영 Product Designer",
+        "상품 기획 UX 디자이너",
+        "개발 조직과 협업하는 프로덕트 디자이너",
+        "연구 기반 서비스의 Product Designer",
+        "서비스 운영 경험이 있는 UX 디자이너",
+        "기획부터 출시까지 담당하는 프로덕트 디자이너",
+        "Product & Visual Designer", "브랜드·콘텐츠 디자이너", "그래픽/모션 디자이너",
+    ],
+)
+def test_multiple_design_specialties_are_not_treated_as_mixed_roles(role):
+    record = PostRecord(
+        post_id="design", source_url="https://inthiswork.com/archives/design",
+        title=f"회사｜{role}", role_or_program=role, content_type="채용공고",
+    )
+    assert classify_opportunity_scope(record) == "in_scope"
+    assert has_mixed_role_listing(role) is False
+
+
+@pytest.mark.parametrize(
+    "role",
+    [
+        "전시기획 디자이너, 컨서베이터",
+        "UX 디자이너, iOS Developer",
+        "브랜드 디자이너/마케터",
+        "그래픽 디자이너 및 MD",
+        "디자이너·큐레이터",
+        "관리/마케팅/영업/디자인/개발/연구 등 모집",
+    ],
+)
+def test_delimiter_separated_design_and_non_design_roles_are_mixed(role):
+    record = PostRecord(
+        post_id="mixed", source_url="https://inthiswork.com/archives/mixed",
+        title=f"회사｜{role}", role_or_program=role, content_type="채용공고",
+    )
+    assert has_mixed_role_listing(role) is True
+    assert classify_opportunity_scope(record) == "no_isolated_design_role"
+
+
+@pytest.mark.parametrize(
+    "body_text",
+    [
+        "채용 시 마감",
+        "조기 마감될 수 있습니다",
+        "모집 완료 시 마감",
+        "우수 인재 채용 시 조기 마감",
+        "상시채용으로 조기 마감될 수 있음",
+        "마감일은 변경될 수 있음",
+        "모집 마감: 2099.08.12",
+        "접수 마감: 2099.08.12",
+    ],
+)
+def test_future_deadline_and_advisory_deadline_text_remain_open(body_text):
+    assert determine_status("회사｜디자이너 채용", body_text, "2099-08-12") == "모집 중"
+
+
+@pytest.mark.parametrize(
+    "closed_text",
+    [
+        "이 공고는 마감된 공고 혹은 비공개입니다",
+        "지원 종료", "모집 종료", "채용 마감", "접수가 종료되었습니다",
+    ],
+)
+def test_explicit_closed_signals_mark_post_closed(closed_text):
+    assert determine_status("회사｜디자이너 채용", closed_text, "2099-08-12") == "마감"
+
+
 def test_krafton_and_lg_research_jobs_are_filtered_but_krafton_sections_are_clean():
     krafton = parse_post_html(
         _fixture("krafton_358889_live_shape"),
@@ -188,6 +274,7 @@ def test_content_root_scores_candidates_and_deduplicates_fusion_body():
     assert record.key_duties == "UI/UX 기획 및 디자인 작업 지원"
     assert record.location == "경기도 성남시 분당구 정자동"
     assert record.deadline == "2026-08-12"
+    assert record.status == "모집 중"
     assert sum(block.text == "UI/UX 기획 및 디자인 작업 지원" for block in record.body_blocks) == 1
 
 
@@ -204,6 +291,7 @@ def test_regression_379538_current_fusion_structure():
     assert record.employment_types == ["인턴"]
     assert {"UI/UX", "캐릭터/일러스트"}.issubset(record.design_fields)
     assert record.deadline == "2026-08-12"
+    assert record.status == "모집 중"
     assert record.location == "경기도 성남시 분당구 정자동"
     assert "UI/UX 기획 및 디자인 작업 지원" in record.key_duties
     assert record.body_blocks

@@ -77,13 +77,23 @@ def test_scope_filter_excludes_non_design_records_before_output_or_notion_work(c
         role_or_program="관리/마케팅/영업/디자인/개발/연구 등 모집",
         content_type="채용공고",
     )
+    eland = PostRecord(
+        post_id="380915", source_url="https://inthiswork.com/archives/380915",
+        title="이랜드월드｜이랜드뮤지엄 신입 및 경력채용 (전시기획 디자이너, 컨서베이터)",
+        role_or_program="이랜드뮤지엄 신입 및 경력채용 (전시기획 디자이너, 컨서베이터)",
+        content_type="채용공고",
+        quality_reasons={"missing_body": True, "image_only_content": True},
+    )
 
     included, counts = _filter_in_scope_records(
-        [design, ios, mixed], "https://inthiswork.com/list"
+        [design, ios, mixed, eland], "https://inthiswork.com/list"
     )
 
     assert included == [design]
-    assert counts == {"in_scope": 1, "filtered_non_design": 1, "filtered_ambiguous": 1}
+    assert counts == {"in_scope": 1, "filtered_non_design": 1, "filtered_ambiguous": 2}
     assert "ID=372901" in caplog.text
     assert "reason=non_design_role" in caplog.text
+    assert "ID=380915" in caplog.text
+    assert "reason=no_isolated_design_role" in caplog.text
     assert all(record.post_id != "372901" for record in included)
+    assert all(record.post_id != "380915" for record in included)
