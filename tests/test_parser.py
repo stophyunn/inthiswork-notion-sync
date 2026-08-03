@@ -1117,6 +1117,149 @@ def test_final_66_explicit_design_titles_are_in_scope_with_minimal_scope_fixture
         assert expected_field in record.design_fields
 
 
+def test_gm_design_center_live_qualification_boundaries():
+    record = parse_post_html(
+        _fixture("gm_design_center_377370_live_shape"),
+        "https://inthiswork.com/archives/377370",
+    )
+    assert record.organization == "GM테크니컬센터코리아"
+    assert record.role_or_program == "2026 디자인센터 가을인턴 모집"
+    assert record.content_type == "채용공고"
+    assert record.key_duties == ""
+    assert record.qualifications.splitlines() == [
+        "모집전공:",
+        "익스테리어 디자인 :",
+        "운송디자인학과/산업디자인학과/시각디자인학과/영상디자인학과",
+        "GCV:",
+        "학점:",
+        "전 학년 평점 B 학점 (3.0/4.5) 이상",
+        "학력:",
+        "4년제 정규 대학교 이상 기졸업자 (경력 2년 미만자)",
+        "2027 년 2 월 졸업 예정자",
+        "병역:",
+        "군필 또는 면제자",
+        "국내에 합법적으로 취업이 가능한 자/해외여행에 결격사유가 없는 자",
+        "영어로 비즈니스 의사소통이 가능한 자",
+        "연수기간내에 풀타임( full-time) 으로 참여 가능한 자",
+    ]
+    assert record.preferred_qualifications.splitlines() == [
+        "1.",
+        "익스테리어 디자인",
+        "높은 수준의 디지털 렌더링 스킬 보유자",
+        "Alias, VRED, Blender 등 다양한 3D 디자인 프로그램 고급 활용 가능자",
+        "원활한 영어 의사소통 가능자",
+        "2.",
+        "Global Creative Visualization",
+        "(GCV)",
+        "AI 비주얼라이제이션 컨트롤 능력 보유자",
+        "Unreal Engine을 활용해 차량의 미적 요소와 시네마틱 시퀀스를 표현할 수 있는 자",
+        "Unreal Engine 내 Blueprint 컨트롤 능력 보유자",
+    ]
+    assert record.benefits_prize == ""
+    assert record.essay_questions == ""
+    assert record.pre_assignment == ""
+    structured = record.qualifications + "\n" + record.preferred_qualifications
+    assert not any(value in structured for value in (
+        "Your Skills & Abilities", "공통지원자격", "What Will Give You A Competitive Edge",
+        "우대 지원자격", "How we Hire", "인턴 근무지", "부평대로 233", "인턴기간",
+        "8주 Program", "접수마감",
+    ))
+    assert record.collection_status == "검토 필요"
+    assert record.quality_reasons["missing_job_duties"] is True
+    assert record.quality_reasons["inconsistent_structured_sections"] is False
+    assert classify_opportunity_scope(record) == "in_scope"
+
+
+def test_analogai_live_repeated_qualifications_and_benefits_boundary():
+    record = parse_post_html(
+        _fixture("analogai_377232_live_shape"),
+        "https://inthiswork.com/archives/377232",
+    )
+    assert record.organization == "AnalogAI(주식회사 아날로그에이아이)"
+    assert record.role_or_program == "[AnalogAI] Branding Designer"
+    assert record.content_type == "채용공고"
+    assert record.key_duties == ""
+    assert record.qualifications.splitlines() == [
+        "Figma 활용 능력",
+        "기본 그래픽 툴(포토샵/일러스트레이터) 활용 능력",
+        "생성형 AI 툴(Claude, ChatGPT, Midjourney, DALL·E 등)을 실무 워크플로우에 활용하는 능력",
+        "타이포그래피·레이아웃·컬러 등 디자인 기본기",
+        "정보 구조화 및 스토리텔링 기반 발표자료 설계 능력",
+        "단순히 ‘예쁜 결과물’을 만드는 데 그치지 않고, 왜 그렇게 디자인해야 하는지 브랜드 관점에서 사고하는 디자이너로서의 기본 소양을 갖춘 분",
+        "산발적으로 만들어진 에셋들을 하나의 일관된 브랜드로 정리하고, 그 기준을 시스템과 프로세스로 남겨 조직에 정착시키는 일에 보람을 느끼는 분",
+        "새로운 AI 툴을 빠르게 학습해 실무에 적용하는 실행력을 지닌 분",
+        "여러 부서와 소통하며 브랜드 방향성을 함께 다듬어 가는 능동적이고 협력적인 태도를 지닌 분",
+        "홍보·마케팅팀과 협업해 메시지와 카피를 브랜드 톤에 맞게 다듬는 감각을 가진 분",
+    ]
+    assert record.preferred_qualifications.splitlines() == [
+        "Figma 기반 디자인 시스템·컴포넌트 설계 경험",
+        "Claude 등 범용 AI를 활용한 문서·슬라이드·웹 결과물 제작 및 프롬프트 설계 경험",
+        "Gamma, Canva, Webflow, Framer 등 AI 기반 프레젠테이션/웹 제작 툴 활용 경험",
+        "브랜드 아이덴티티(BI)·디자인 시스템 구축 경험",
+        "투자 라운드용 회사소개서(IR 덱) 등 PR/IR 자료 제작 경험",
+        "인포그래픽·데이터 시각화를 활용한 자료 제작 경험",
+        "※ 위 우대 사항을 모두 갖추지 않아도 지원 가능합니다. 신입의 경우 학습 의지와 실행력을 중점적으로 봅니다.",
+    ]
+    assert record.benefits_prize.splitlines() == [
+        "스톡옵션 제도: 장기적 성과 공유를 위한 스톡옵션 부여",
+        "최신 업무 장비 지원: 최신 사양 노트북 제공, 듀얼 모니터 기본 제공",
+        "교육 및 자격증 지원: 직무 관련 교육비 지원, 컨퍼런스/세미나 참가비 지원",
+        "간식 및 커피 무제한 제공: 오피스 내 상시 스낵바 운영",
+        "자유로운 휴가 제도: 30분 단위 사용 가능한 휴가 제도",
+    ]
+    assert record.essay_questions == ""
+    assert record.pre_assignment == ""
+    assert not any(value in record.qualifications for value in (
+        "우대 사항", "복지혜택", "복지 혜택", "스톡옵션 제도", "최신 업무 장비 지원",
+        "교육 및 자격증 지원", "간식 및 커피 무제한 제공", "자유로운 휴가 제도", "제출 서류",
+    ))
+    assert "복지혜택" not in record.benefits_prize
+    assert "제출 서류" not in record.benefits_prize
+    assert record.collection_status == "검토 필요"
+    assert record.quality_reasons["missing_job_duties"] is True
+    assert record.quality_reasons["inconsistent_structured_sections"] is False
+    assert classify_opportunity_scope(record) == "in_scope"
+
+
+@pytest.mark.parametrize("heading", [
+    "우대 지원자격",
+    "What Will Give You A Competitive Edge",
+    "What Will Give You A Competitive Edge (우대 지원자격) –",
+    "What Will Give You A Competitive Edge (우대 지원자격) -",
+    "What Will Give You A Competitive Edge (우대 지원자격) —",
+])
+def test_live_preferred_heading_variants_use_html_extraction_path(heading):
+    html = (
+        "<html><head><meta property='og:title' content='Example｜Product Designer 채용'></head>"
+        f"<body><article><p>{heading}</p><p>3D 디자인 경험</p>"
+        "<p>How we Hire</p><p>서류 전형</p></article></body></html>"
+    )
+    record = parse_post_html(html, "https://inthiswork.test/archives/600030")
+    assert record.preferred_qualifications == "3D 디자인 경험"
+
+
+@pytest.mark.parametrize("heading", ["복지혜택", "복지 혜택"])
+def test_live_benefits_heading_variants_use_paragraph_extraction_path(heading):
+    html = (
+        "<html><head><meta property='og:title' content='Example｜Product Designer 채용'></head>"
+        f"<body><article><p>{heading}</p><p>장비 지원</p>"
+        "<h3>제출 서류</h3></article></body></html>"
+    )
+    record = parse_post_html(html, "https://inthiswork.test/archives/600031")
+    assert record.benefits_prize == "장비 지원"
+
+
+@pytest.mark.parametrize("boundary", ["How we Hire", "인턴 근무지", "인턴기간", "인턴 기간"])
+def test_live_process_and_conditions_boundaries_stop_preferred_section(boundary):
+    html = (
+        "<html><head><meta property='og:title' content='Example｜Product Designer 채용'></head>"
+        "<body><article><p>우대 지원자격</p><p>협업 경험</p>"
+        f"<p>{boundary}</p><p>구조화되면 안 되는 내용</p></article></body></html>"
+    )
+    record = parse_post_html(html, "https://inthiswork.test/archives/600032")
+    assert record.preferred_qualifications == "협업 경험"
+
+
 def test_onplanet_mixed_roles_are_safely_excluded_without_isolated_body():
     record = parse_post_html(
         _fixture("onplanet_378088_live_shape"),
@@ -1308,6 +1451,25 @@ def test_final_66_structured_boundary_leaks_are_inconsistent(leaked):
         "essay_questions": "",
         "pre_assignment": "",
     }
+    assert _structured_sections_are_consistent(blocks, sections) is False
+
+
+@pytest.mark.parametrize("field", ["key_duties", "qualifications", "preferred_qualifications"])
+@pytest.mark.parametrize("leaked", [
+    "우대 지원자격", "What Will Give You A Competitive Edge", "복지혜택", "복지 혜택",
+    "How we Hire", "인턴 근무지", "인턴기간", "인턴 기간",
+])
+def test_live_heading_leaks_are_inconsistent_in_core_structured_fields(field, leaked):
+    blocks = [ContentBlock(kind="paragraph", text=leaked)]
+    sections = {
+        "key_duties": "",
+        "target_audience": "",
+        "qualifications": "",
+        "preferred_qualifications": "",
+        "essay_questions": "",
+        "pre_assignment": "",
+    }
+    sections[field] = leaked
     assert _structured_sections_are_consistent(blocks, sections) is False
 
 
