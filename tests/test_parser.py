@@ -9,6 +9,7 @@ from src.parser import (
     determine_status,
     has_mixed_role_listing,
     heading_candidates,
+    normalize_heading_text,
     parse_post_html,
     parse_post_html_records,
 )
@@ -1104,7 +1105,7 @@ def test_quality_reason_is_true_when_structured_boundary_leaks(monkeypatch):
         ("ptkorea_374565_live_shape", "374565", "채용공고", "UI/UX"),
     ],
 )
-def test_final_66_explicit_design_titles_are_in_scope(
+def test_final_66_explicit_design_titles_are_in_scope_with_minimal_scope_fixtures(
     fixture, post_id, expected_type, expected_field,
 ):
     record = parse_post_html(
@@ -1166,12 +1167,29 @@ def test_ziro_preferred_benefits_and_process_boundaries():
         _fixture("ziro_377710_live_shape"),
         "https://inthiswork.com/archives/377710",
     )
-    assert record.key_duties == "사용자 UX 설계\nGUI 디자인\nUX Writing"
-    assert record.qualifications == "Figma 활용 역량\n제품 디자인 경험"
-    assert record.preferred_qualifications == "디자인 시스템 구축 경험\nB2B 제품 경험"
-    assert record.benefits_prize == "유연 근무와 장비 지원"
-    structured = record.qualifications + record.preferred_qualifications
-    assert "채용 단계" not in structured and "서류 전형" not in structured
+    assert record.key_duties.splitlines() == [
+        "사용자 니즈 기반의 UX 설계 및 프로토타입 제작",
+        "디자인 시스템과 브랜드 컨셉을 고려한 GUI 디자인",
+        "사용성을 높이기 위한 UX Writing",
+    ]
+    assert len(record.qualifications.splitlines()) == 4
+    assert record.preferred_qualifications.splitlines() == [
+        "작은 프로덕트더라도 0 to 1까지 스스로 기획하고 디자인한 경험이 있는 분",
+        "디자인 시스템을 구축하거나 활용해 본 경험이 있는 분",
+        "반응형 웹 디자인 프로젝트 경험이 있는 분",
+    ]
+    assert record.benefits_prize == "업무 장비를 지원합니다.\n유연한 근무 환경을 제공합니다."
+    structured = "\n".join((
+        record.qualifications, record.preferred_qualifications, record.benefits_prize,
+    ))
+    assert not any(value in structured for value in (
+        "채용 단계", "서류 전형", "직무 면접", "컬쳐핏 면접", "처우협의",
+        "최종합격", "근무환경", "급여 및 연봉", "근무 시작일",
+    ))
+    assert record.essay_questions == ""
+    assert record.pre_assignment == ""
+    assert record.collection_status == "정상"
+    assert record.quality_reasons["inconsistent_structured_sections"] is False
 
 
 def test_kream_needed_skills_preferred_conditions_and_process_boundaries():
@@ -1205,14 +1223,21 @@ def test_nsapia_pipe_sections_and_generic_task_process_are_handled():
         "https://inthiswork.com/archives/374480",
     )
     assert record.key_duties == (
-        "신규 아바타 서비스 주요 화면 UI/UX 디자인\n관계 구조와 User Flow 시각화"
+        "신규 아바타 서비스의 메인 및 주요 화면 UI/UX 디자인\n"
+        "아바타 간 관계 구조 및 User Flow 시각화"
     )
     assert record.qualifications == (
-        "관련 경력 2년 이상 및 Figma 숙련\nUI/UX 화면 구조와 인터랙션 제안 역량"
+        "관련 경력 2년차 이상 및 Figma 숙련\nUI/UX 화면 구조 및 인터랙션 제안 역량"
     )
     assert record.preferred_qualifications == (
-        "모바일 앱 출시·프로젝트 경험\nZ세대 대상 비주얼 아트워크 감각"
+        "모바일 앱 출시 또는 관련 프로젝트 경험\nZ세대 대상 비주얼 아트워크 감각"
     )
+    structured = "\n".join((
+        record.key_duties, record.qualifications, record.preferred_qualifications,
+    ))
+    assert "💻" not in structured
+    assert "인재영입 프로세스" not in structured
+    assert "지원자와 회사" not in structured
     assert record.pre_assignment == ""
     assert record.collection_status == "정상"
     assert record.quality_reasons["inconsistent_structured_sections"] is False
@@ -1227,6 +1252,74 @@ def test_nsapia_pipe_sections_and_generic_task_process_are_handled():
     ],
 )
 def test_final_66_structured_boundary_leaks_are_inconsistent(leaked):
+    blocks = [ContentBlock(kind="paragraph", text=leaked)]
+    sections = {
+        "key_duties": leaked,
+        "target_audience": "",
+        "qualifications": "",
+        "preferred_qualifications": "",
+        "essay_questions": "",
+        "pre_assignment": "",
+    }
+    assert _structured_sections_are_consistent(blocks, sections) is False
+
+
+@pytest.mark.parametrize(
+    ("raw", "normalized"),
+    [
+        ("🧚‍♂️ 혜택 및 복지", "혜택 및 복지"),
+        ("⛳️ 채용 단계", "채용 단계"),
+        ("👥 근무환경", "근무환경"),
+        ("🛸인재영입 프로세스", "인재영입 프로세스"),
+        ("🔸담당하실 업무에요", "담당하실 업무에요"),
+        ("*** 주요업무", "주요업무"),
+    ],
+)
+def test_unicode_heading_decoration_normalization(raw, normalized):
+    assert normalize_heading_text(raw) == normalized
+
+
+def test_decoration_only_blocks_are_removed_but_meaningful_star_text_remains():
+    html = """
+    <html><head><meta property='og:title' content='Example｜Product Designer 채용'></head>
+    <body><article><p>💻</p><p>🛸</p><p>🧚‍♂️</p><p>⛳️</p><p>*</p><p>***</p>
+    <p>* 주요업무 설명</p><h3>담당 업무</h3><p>제품을 디자인합니다.</p></article></body></html>
+    """
+    record = parse_post_html(html, "https://inthiswork.com/archives/600020")
+    texts = [block.text for block in record.body_blocks]
+    assert not any(value in texts for value in ("💻", "🛸", "🧚‍♂️", "⛳️", "*", "***"))
+    assert "* 주요업무 설명" in texts
+
+
+def test_hyundai_securities_live_star_and_common_qualification_sections():
+    record = parse_post_html(
+        _fixture("hyundai_securities_374726_live_shape"),
+        "https://inthiswork.com/archives/374726",
+    )
+    assert len(record.key_duties.splitlines()) == 6
+    assert len(record.qualifications.splitlines()) == 6
+    assert len(record.preferred_qualifications.splitlines()) == 3
+    assert record.qualifications.endswith(
+        "해외여행 및 건강상 결격사유 없는 자\n남성의 경우 병역 필 또는 면제자"
+    )
+    assert "공통지원자격" not in record.preferred_qualifications
+    assert "해외여행" not in record.preferred_qualifications
+    structured = "\n".join((
+        record.key_duties, record.qualifications, record.preferred_qualifications,
+    ))
+    assert "*" not in structured
+    assert record.collection_status == "정상"
+    assert record.quality_reasons["inconsistent_structured_sections"] is False
+
+
+@pytest.mark.parametrize(
+    "leaked",
+    [
+        "🧚‍♂️ 혜택 및 복지", "⛳️ 채용 단계", "👥 근무환경",
+        "🛸인재영입 프로세스", "공통지원자격", "*", "💻",
+    ],
+)
+def test_emoji_and_decoration_structured_leaks_are_inconsistent(leaked):
     blocks = [ContentBlock(kind="paragraph", text=leaked)]
     sections = {
         "key_duties": leaked,

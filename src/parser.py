@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from copy import deepcopy
 from datetime import date, datetime
 from html import unescape
@@ -76,6 +77,7 @@ SECTION_HEADINGS = {
         "Responsibilities", "What you'll do", "What you will do", "Your role",
     ),
     "audience": (
+        "공통지원자격", "공통 지원 자격",
         "필요 역량", "필요역량", "필요 역량 및 경험", "필요 역랑 및 경험",
         "필요 역량과 경험", "필요한 역량 및 경험",
         "이런 경험이 있는 분을 찾고 있어요",
@@ -105,7 +107,7 @@ SECTION_HEADINGS = {
         "지원 내용", "참여 혜택", "활동 혜택", "상금", "시상 내역",
     ),
     "conditions": (
-        "고용 조건", "근무 환경", "근무 조건", "근무 형태", "근무 장소", "근무지",
+        "고용 조건", "근무환경", "근무 환경", "근무 조건", "근무 형태", "근무 장소", "근무지",
         "꼭 확인해주세요",
     ),
     "process": (
@@ -158,8 +160,6 @@ SECTION_TITLE_RE = re.compile(
     re.I,
 )
 INLINE_SECTION_RE = re.compile(rf"\[\s*(?:{SECTION_TITLE_PATTERN})\s*\]|(?:{SECTION_TITLE_PATTERN})", re.I)
-DECORATION_ONLY_RE = re.compile(r"^[\sㆍ•·\-–—😉❤❤️♡]+$")
-STRUCTURED_DECORATION_RE = re.compile(r"^[\s\[\](){}:：!！❖🌟📌🎯✨😀🎆📩🤝🎁🔸🔹ㆍ•·\-–—]+$")
 URL_ONLY_RE = re.compile(r"^(?:https?://|www\.)\S+$", re.I)
 STRUCTURED_LEAK_RE = re.compile(
     r"^(?:사전과제\s*확인하기|※?\s*지원\s*시\s*직군\s*/\s*직무\s*설정|"
@@ -198,11 +198,31 @@ def _heading_patterns(kind: str) -> list[str]:
     return [re.escape(value).replace(r"\ ", r"\s*") for value in SECTION_HEADINGS[kind]]
 
 
-def _strip_heading_wrapper(text: str) -> str:
+def _is_decoration_character(character: str) -> bool:
+    """Return whether a character is heading decoration, including emoji glue."""
+    category = unicodedata.category(character)
+    return character.isspace() or character == "\u200d" or category[0] in {"M", "P", "S"}
+
+
+def _is_decoration_only(text: str) -> bool:
     value = clean_text(text)
-    value = re.sub(r"^[\s\[\](){}【】（）：:🌟📌🎯✨😀🎆📩🤝🎁🔸🔹❖※!！]+", "", value)
-    value = re.sub(r"[\s\[\](){}【】（）：:!！.。]+$", "", value)
-    return clean_text(value)
+    return bool(value) and all(_is_decoration_character(character) for character in value)
+
+
+def normalize_heading_text(text: str) -> str:
+    """Remove leading/trailing Unicode emoji and wrapper punctuation from headings."""
+    value = clean_text(text)
+    start = 0
+    while start < len(value) and _is_decoration_character(value[start]):
+        start += 1
+    end = len(value)
+    while end > start and _is_decoration_character(value[end - 1]):
+        end -= 1
+    return clean_text(value[start:end])
+
+
+def _strip_heading_wrapper(text: str) -> str:
+    return normalize_heading_text(text)
 
 
 def _exact_section_kind(text: str) -> str | None:
@@ -634,7 +654,7 @@ def _walk_blocks(node: Tag) -> tuple[list[ContentBlock], bool]:
         if kind != "divider" and not normalized:
             return
         if kind != "divider" and (
-            DECORATION_ONLY_RE.fullmatch(normalized)
+            _is_decoration_only(normalized)
             or re.fullmatch(r"지원(?:하러\s*가기|하기)", normalized, re.I)
         ):
             return
@@ -1087,6 +1107,7 @@ def _extract_section(
     heading_patterns: list[str],
     max_chars: int = 1800,
     section_kind: str | None = None,
+    combine_candidates: bool = False,
 ) -> str:
     heading_re = re.compile("|".join(heading_patterns), re.I)
     candidates: list[tuple[int, int, list[str]]] = []
@@ -1108,7 +1129,7 @@ def _extract_section(
             start_index = index
             priority = 2 if re.fullmatch(
                 r"(?:주요|담당|수행)\s*업무|업무\s*내용|자격\s*요건|지원\s*자격|"
-                r"지원자격|우대\s*사항|우대\s*요건|우대\s*자격",
+                r"지원자격|공통\s*지원\s*자격|우대\s*사항|우대\s*요건|우대\s*자격",
                 candidate_text,
                 re.I,
             ) else 1
@@ -1126,7 +1147,7 @@ def _extract_section(
                 start_index = index
             continue
         text = clean_text(block.text)
-        if not text or STRUCTURED_DECORATION_RE.fullmatch(text):
+        if not text or _is_decoration_only(text):
             continue
         if re.match(
             r"^(?:게시일|등록일|접수\s*(?:기간|마감)|지원(?:서)?\s*(?:기간|접수\s*마감)|"
@@ -1153,10 +1174,21 @@ def _extract_section(
         return ""
     # Explicit headings win over broad natural-language headings. For equal
     # headings prefer the later complete section, avoiding introductory copies.
-    _, _, selected = max(candidates, key=lambda item: (item[0], item[1]))
-    while selected and STRUCTURED_DECORATION_RE.fullmatch(selected[0]):
+    if combine_candidates:
+        max_priority = max(item[0] for item in candidates)
+        selected = []
+        for _, _, lines in sorted(
+            (item for item in candidates if item[0] == max_priority),
+            key=lambda item: item[1],
+        ):
+            for line in lines:
+                if line not in selected:
+                    selected.append(line)
+    else:
+        _, _, selected = max(candidates, key=lambda item: (item[0], item[1]))
+    while selected and _is_decoration_only(selected[0]):
         selected.pop(0)
-    while selected and STRUCTURED_DECORATION_RE.fullmatch(selected[-1]):
+    while selected and _is_decoration_only(selected[-1]):
         selected.pop()
     return _join_complete_lines(selected, max_chars)
 
@@ -1174,7 +1206,9 @@ def extract_target_audience(blocks: list[ContentBlock], content_type: str) -> st
 def extract_qualifications(blocks: list[ContentBlock], content_type: str) -> str:
     if content_type != "채용공고":
         return ""
-    return _extract_section(blocks, _heading_patterns("audience"), 1800, "audience")
+    return _extract_section(
+        blocks, _heading_patterns("audience"), 1800, "audience", combine_candidates=True
+    )
 
 
 def extract_preferred_qualifications(blocks: list[ContentBlock]) -> str:
@@ -1210,7 +1244,7 @@ def extract_pre_assignment(blocks: list[ContentBlock]) -> str:
             break
         if collecting and block.text:
             text = clean_text(block.text)
-            if not STRUCTURED_DECORATION_RE.fullmatch(text):
+            if not _is_decoration_only(text):
                 output.append(text)
     return _join_complete_lines(output, 1800)
 
@@ -1262,11 +1296,12 @@ def _structured_sections_are_consistent(
         lines = [clean_text(line) for line in sections[field].splitlines() if clean_text(line)]
         if not lines:
             continue
-        if STRUCTURED_DECORATION_RE.fullmatch(lines[0]) or STRUCTURED_DECORATION_RE.fullmatch(lines[-1]):
+        if _is_decoration_only(lines[0]) or _is_decoration_only(lines[-1]):
             return False
         for line in lines:
             if (
-                URL_ONLY_RE.fullmatch(line)
+                _is_decoration_only(line)
+                or URL_ONLY_RE.fullmatch(line)
                 or STRUCTURED_LEAK_RE.fullmatch(line)
                 or _exact_section_kind(line) is not None
             ):
