@@ -195,6 +195,7 @@ MIN_RENDER_REPEAT_BLOCKS = 6
 MIN_RENDER_REPEAT_CHARS = 180
 MIN_UNRESOLVED_REPEAT_BLOCKS = 4
 MIN_UNRESOLVED_REPEAT_CHARS = 120
+HEADING_APOSTROPHE_TRANSLATION = str.maketrans({"’": "'", "‘": "'", "ʼ": "'"})
 
 
 def _heading_patterns(kind: str) -> list[str]:
@@ -214,7 +215,7 @@ def _is_decoration_only(text: str) -> bool:
 
 def normalize_heading_text(text: str) -> str:
     """Remove leading/trailing Unicode emoji and wrapper punctuation from headings."""
-    value = clean_text(text)
+    value = clean_text(text).translate(HEADING_APOSTROPHE_TRANSLATION)
     start = 0
     while start < len(value) and _is_decoration_character(value[start]):
         start += 1
