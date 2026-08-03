@@ -62,11 +62,12 @@ NOISE_SELECTORS = [
 SECTION_HEADINGS = {
     "duties": (
         "이런 일을 함께해요", "이런 경험을 할 수 있어요", "이런 업무를 함께 할 예정이에요",
-        "이런 업무를 담당해요", "주요 업무", "담당 업무", "수행 업무", "업무 내용", "하실 일", "역할",
+        "이런 업무를 담당해요", "합류하면 함께 할 업무예요", "합류하면 함께할 업무예요",
+        "주요 업무", "담당 업무", "수행 업무", "업무 내용", "하실 일", "역할",
     ),
     "audience": (
         "이런 분을 모시고 있어요", "이런 분을 찾고 있어요", "이런 분을 기다립니다",
-        "지원 자격", "자격 요건", "필수 사항", "지원 대상",
+        "이런 분과 함께하고 싶어요", "지원 자격", "자격 요건", "필수 사항", "지원 대상",
     ),
     "preferred": (
         "이런 분이면 더더욱 환영해요", "이런 경험이 있다면 더욱 좋아요", "이번 채용은 이런 분을 우대해요",
@@ -93,6 +94,10 @@ INLINE_SECTION_RE = re.compile(rf"\[\s*(?:{SECTION_TITLE_PATTERN})\s*\]|(?:{SECT
 DECORATION_ONLY_RE = re.compile(r"^[\sㆍ•·\-–—😉❤❤️♡]+$")
 COMPACT_BULLET_RE = re.compile(r"^[ㆍ•·]\s*(\S.*)$")
 SPACED_BULLET_RE = re.compile(r"^[\-–—]\s+(\S.*)$")
+MIN_RENDER_REPEAT_BLOCKS = 6
+MIN_RENDER_REPEAT_CHARS = 180
+MIN_UNRESOLVED_REPEAT_BLOCKS = 4
+MIN_UNRESOLVED_REPEAT_CHARS = 120
 
 
 def _heading_patterns(kind: str) -> list[str]:
@@ -123,33 +128,61 @@ def _bullet_text(value: str) -> str | None:
     return clean_text(marker.group(1)) if marker else None
 
 
+def _sequence_text_length(blocks: list[ContentBlock]) -> int:
+    return sum(len(block.text) for block in blocks if block.text)
+
+
+def _find_repeated_sequence(
+    blocks: list[ContentBlock],
+    min_blocks: int,
+    min_chars: int,
+    complete_render_only: bool = False,
+) -> tuple[int, int, int] | None:
+    """Return the longest non-overlapping repeated contiguous block sequence."""
+    for size in range(len(blocks) // 2, min_blocks - 1, -1):
+        positions: dict[tuple[ContentBlock, ...], int] = {}
+        for start in range(0, len(blocks) - size + 1):
+            sequence = tuple(blocks[start : start + size])
+            first_start = positions.get(sequence)
+            if first_start is not None and first_start + size <= start:
+                if _sequence_text_length(list(sequence)) >= min_chars:
+                    candidate = (first_start, start, size)
+                    if not complete_render_only or _is_complete_render_repeat(
+                        blocks, *candidate
+                    ):
+                        return candidate
+            positions.setdefault(sequence, start)
+    return None
+
+
+def _is_complete_render_repeat(
+    blocks: list[ContentBlock], first_start: int, second_start: int, size: int
+) -> bool:
+    sequence = blocks[first_start : first_start + size]
+    heading_count = sum(block.kind.startswith("heading") for block in sequence)
+    covers_body = first_start == 0 and second_start + size == len(blocks)
+    return covers_body or heading_count >= 2
+
+
 def _remove_duplicate_renderings(blocks: list[ContentBlock]) -> list[ContentBlock]:
-    """Remove confidently identified desktop/mobile copies and empty headings."""
+    """Keep one complete copy of confidently repeated desktop/mobile bodies."""
     result: list[ContentBlock] = []
     for block in blocks:
-        if (
-            result
-            and not block.kind.startswith("heading")
-            and block == result[-1]
-        ):
+        if result and not block.kind.startswith("heading") and block == result[-1]:
             continue
         result.append(block)
 
-    # A repeated adjacent sequence containing a heading is a strong rendering-copy
-    # signal. Body-only repetitions remain available for quality inspection.
-    changed = True
-    while changed:
-        changed = False
-        for size in range(len(result) // 2, 1, -1):
-            for start in range(0, len(result) - size * 2 + 1):
-                first = result[start : start + size]
-                second = result[start + size : start + size * 2]
-                if first == second and any(block.kind.startswith("heading") for block in first):
-                    del result[start + size : start + size * 2]
-                    changed = True
-                    break
-            if changed:
-                break
+    while True:
+        repeated = _find_repeated_sequence(
+            result,
+            MIN_RENDER_REPEAT_BLOCKS,
+            MIN_RENDER_REPEAT_CHARS,
+            complete_render_only=True,
+        )
+        if repeated is None:
+            break
+        _, second_start, size = repeated
+        del result[second_start : second_start + size]
 
     seen_headings: set[str] = set()
     cleaned: list[ContentBlock] = []
@@ -170,7 +203,7 @@ def _remove_duplicate_renderings(blocks: list[ContentBlock]) -> list[ContentBloc
 
 
 def _has_unresolved_repetition(blocks: list[ContentBlock]) -> bool:
-    """Detect an adjacent repeated meaningful body sequence within a section."""
+    """Detect a sufficiently long unresolved body sequence within a section."""
     sections: list[list[tuple[str, str]]] = [[]]
     for block in blocks:
         if block.kind.startswith("heading"):
@@ -179,10 +212,13 @@ def _has_unresolved_repetition(blocks: list[ContentBlock]) -> bool:
             sections[-1].append((block.kind, clean_text(block.text).casefold()))
 
     for section in sections:
-        for size in range(2, len(section) // 2 + 1):
-            for start in range(0, len(section) - size * 2 + 1):
-                if section[start : start + size] == section[start + size : start + size * 2]:
-                    return True
+        content_blocks = [ContentBlock(kind=kind, text=text) for kind, text in section]
+        if _find_repeated_sequence(
+            content_blocks,
+            MIN_UNRESOLVED_REPEAT_BLOCKS,
+            MIN_UNRESOLVED_REPEAT_CHARS,
+        ):
+            return True
     return False
 
 
@@ -314,7 +350,7 @@ def _walk_blocks(node: Tag) -> tuple[list[ContentBlock], bool]:
             return
         if kind != "divider" and (
             DECORATION_ONLY_RE.fullmatch(normalized)
-            or re.fullmatch(r"지원하러\s*가기", normalized, re.I)
+            or re.fullmatch(r"지원(?:하러\s*가기|하기)", normalized, re.I)
         ):
             return
         block = ContentBlock(kind=kind, text=normalized)  # type: ignore[arg-type]
