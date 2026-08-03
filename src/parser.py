@@ -61,6 +61,8 @@ NOISE_SELECTORS = [
 
 SECTION_HEADINGS = {
     "duties": (
+        "담당하실 업무에요", "담당 업무 |", "이런 업무를 하게 되실 거예요",
+        "담당 업무 | 이런 업무를 하게 되실 거예요", "주요업무(3개월 단기 MVP)",
         "우리 팀과 함께할 미션을 소개합니다", "함께할 미션을 소개합니다",
         "합류하면 아래와 같은 업무를 하게 됩니다",
         "저희와 함께 하시게 될 일들이에요", "저희와 함께 하게 될 일들이에요",
@@ -74,6 +76,10 @@ SECTION_HEADINGS = {
         "Responsibilities", "What you'll do", "What you will do", "Your role",
     ),
     "audience": (
+        "필요 역량", "필요역량", "필요 역량 및 경험", "필요 역랑 및 경험",
+        "필요 역량과 경험", "필요한 역량 및 경험",
+        "이런 경험이 있는 분을 찾고 있어요",
+        "자격 요건 | 이런 분과 함께하고 싶어요",
         "우리는 이런 분을 찾고 있어요", "우리는 이런 분을 찾습니다",
         "이런 분을 모시고 싶어요", "이런 분을 모시고 싶습니다",
         "이런 분을 모시고 있어요", "이런 분을 찾고 있어요", "이런 분을 찾습니다",
@@ -85,6 +91,8 @@ SECTION_HEADINGS = {
         "Required", "Required Qualifications", "What we're looking for", "Who you are",
     ),
     "preferred": (
+        "우대 조건", "우대조건", "이런 경험이 있다면 더 큰 시너지를 낼 수 있어요",
+        "우대 사항 | 이런 경험을 가지신 분이라면 더 좋아요",
         "이런 분이면 더더욱 환영해요", "이런 분이면 더 좋아요", "이런 분이면 좋습니다",
         "이런 경험을 우대합니다", "있으면 좋은 경험", "이런 경험이 있다면 더욱 좋아요",
         "이런 경험이 있다면 더 좋아요", "이번 채용은 이런 분을 우대해요",
@@ -134,6 +142,10 @@ SECTION_BOUNDARY_HEADINGS = (
     "크래프톤의 도전에 함께 하기 위해 아래의 전형 과정이 필요합니다",
     "아래의 전형 과정이 필요합니다", "전형 과정",
     "필요 서류를 확인해주세요", "아래 안내 사항을 확인해주세요",
+    "서류 작성 TIP", "지원서 작성 TIP", "지원 안내", "지원서 작성 안내",
+    "채용 단계", "채용 조건", "전형절차 및 안내 사항", "전형 절차 및 안내 사항",
+    "서류 접수", "과제 Test", "미팅", "처우 제안", "처우협의", "최종합격",
+    "업무 시작", "세부 안내",
 )
 SECTION_HEADING_VALUES = tuple(
     heading for headings in SECTION_HEADINGS.values() for heading in headings
@@ -147,7 +159,7 @@ SECTION_TITLE_RE = re.compile(
 )
 INLINE_SECTION_RE = re.compile(rf"\[\s*(?:{SECTION_TITLE_PATTERN})\s*\]|(?:{SECTION_TITLE_PATTERN})", re.I)
 DECORATION_ONLY_RE = re.compile(r"^[\sㆍ•·\-–—😉❤❤️♡]+$")
-STRUCTURED_DECORATION_RE = re.compile(r"^[\s\[\](){}:：!！❖🌟📌🎯✨😀🎆📩🤝🎁ㆍ•·\-–—]+$")
+STRUCTURED_DECORATION_RE = re.compile(r"^[\s\[\](){}:：!！❖🌟📌🎯✨😀🎆📩🤝🎁🔸🔹ㆍ•·\-–—]+$")
 URL_ONLY_RE = re.compile(r"^(?:https?://|www\.)\S+$", re.I)
 STRUCTURED_LEAK_RE = re.compile(
     r"^(?:사전과제\s*확인하기|※?\s*지원\s*시\s*직군\s*/\s*직무\s*설정|"
@@ -188,7 +200,7 @@ def _heading_patterns(kind: str) -> list[str]:
 
 def _strip_heading_wrapper(text: str) -> str:
     value = clean_text(text)
-    value = re.sub(r"^[\s\[\](){}【】（）：:🌟📌🎯✨😀🎆📩🤝🎁❖※!！]+", "", value)
+    value = re.sub(r"^[\s\[\](){}【】（）：:🌟📌🎯✨😀🎆📩🤝🎁🔸🔹❖※!！]+", "", value)
     value = re.sub(r"[\s\[\](){}【】（）：:!！.。]+$", "", value)
     return clean_text(value)
 
@@ -202,7 +214,14 @@ def _exact_section_kind(text: str) -> str | None:
         if not candidate:
             continue
         for kind in SECTION_HEADINGS:
-            if any(re.fullmatch(pattern, candidate, re.I) for pattern in _heading_patterns(kind)):
+            if any(
+                re.fullmatch(
+                    re.escape(_strip_heading_wrapper(value)).replace(r"\ ", r"\s*"),
+                    candidate,
+                    re.I,
+                )
+                for value in SECTION_HEADINGS[kind]
+            ):
                 return kind
         if any(
             re.fullmatch(re.escape(value).replace(r"\ ", r"\s*"), candidate, re.I)
@@ -803,7 +822,7 @@ def classify_content(
     title: str, categories: list[str], body_text: str, apply_url: str | None = None
 ) -> str:
     combined = f"{title}\n{body_text[:5000]}".lower()
-    if re.search(r"공모전|콘테스트|competition|contest", combined):
+    if re.search(r"공모전|콘테스트|competition|contest|(?:design.*challenge|challenge.*design)", combined):
         return "공모전"
 
     has_job_category = any(cat in categories for cat in ["신입/인턴", "주니어경력"])
@@ -847,19 +866,24 @@ DESIGN_ROLE_RE = re.compile(
     r"(?:프로덕트|제품|UI\s*/?\s*UX|UX\s*/?\s*UI|UI|UX|"
     r"비주얼|그래픽|콘텐츠|브랜드|BX|모션|캐릭터|공간|패션)\s*디자인(?:\s*(?:직무|인턴))?|"
     r"Product\s+Designer|Visual\s+Designer|Graphic\s+Designer|UI\s+Designer|UX\s+Designer|"
-    r"Brand\s+Designer|Content\s+Designer|Motion\s+Designer|Design\s+Assistant|Design\s+Intern)",
+    r"Brand(?:ing)?\s+Designer|Creative\s+Designer|Content\s+Designer|Motion\s+Designer|"
+    r"Design\s+Assistant|Design\s+Intern|디자인\s*센터.*인턴|마케팅\s*디자인\s*담당자|"
+    r"(?:UXUI|UX\s*/\s*UI|UI\s*/\s*UX)\s*QA|디자인\s*QA|Design\s*QA|UXUI\s*업무\s*보조)",
     re.I,
 )
 NON_DESIGN_ROLE_RE = re.compile(
     r"(?:Developer|Engineer|Software\s+Engineer|Research\s+Scientist|Research\s+Assistant|\bRA\b|"
     r"Data\s+Scientist|ML\s+Engineer|AI\s+Engineer|Product\s+Manager|Product\s+Owner|Marketer|"
     r"Marketing|Sales|Operation|Planning|개발자|엔지니어|연구원|마케터|컨서베이터|큐레이터|"
-    r"영업\s*담당|인사\s*담당|재무\s*담당|(?<![A-Za-z])MD(?![A-Za-z]))",
+    r"영업\s*담당|인사\s*담당|재무\s*담당|(?<![A-Za-z])MD(?![A-Za-z])|"
+    r"(?<![A-Za-z])(?:BI\s*)?PM(?![A-Za-z]))",
     re.I,
 )
 DESIGN_PROGRAM_RE = re.compile(
     r"(?:디자인|디자이너|UI\s*/?\s*UX|UX\s*/?\s*UI|시각디자인|프로덕트\s*디자인|"
-    r"Product\s+Design|Visual\s+Design|Graphic\s+Design|Design\s+(?:Contest|Competition|Program))",
+    r"그래픽|일러스트|Illustration|만화|웹툰|포스터|캐릭터|시각\s*창작|제품\s*디자인|"
+    r"공간\s*디자인|패키지\s*디자인|Product\s+Design|Visual\s+Design|Graphic\s+Design|"
+    r"(?<![A-Za-z])Design(?![A-Za-z]))",
     re.I,
 )
 ROLE_LIST_SEPARATOR_RE = re.compile(r"\s*(?:,|/|·|•|\||\b및\b)\s*", re.I)
@@ -961,7 +985,7 @@ def detect_design_fields(title: str, body_text: str) -> list[str]:
     rules = [
         ("UI/UX", r"ui\s*/?\s*ux|ux\s*/?\s*ui|사용자 경험|인터페이스"),
         ("프로덕트", r"프로덕트\s*디자|product\s*design"),
-        ("BX/브랜드", r"\bbx\b|브랜드\s*디자|브랜딩|brand\s*design"),
+        ("BX/브랜드", r"\bbx\b|브랜드\s*디자|브랜딩|brand(?:ing)?\s*design"),
         ("그래픽", r"그래픽\s*디자|graphic\s*design"),
         ("콘텐츠", r"콘텐츠\s*디자|content\s*design|sns\s*콘텐츠"),
         ("영상/모션", r"영상|모션|motion|video|릴스"),
@@ -969,7 +993,7 @@ def detect_design_fields(title: str, body_text: str) -> list[str]:
         ("패키지", r"패키지\s*디자|package\s*design"),
         ("공간/무대", r"공간\s*디자|무대\s*디자|전시\s*디자|spatial"),
         ("웹", r"웹\s*디자|web\s*design"),
-        ("캐릭터/일러스트", r"캐릭터|일러스트|illustrat"),
+        ("캐릭터/일러스트", r"캐릭터|일러스트|illustrat|만화|웹툰|comic"),
         ("산업/제품", r"산업\s*디자|제품\s*디자|industrial\s*design"),
         ("패션", r"패션\s*디자|fashion\s*design"),
     ]

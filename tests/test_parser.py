@@ -1092,3 +1092,148 @@ def test_quality_reason_is_true_when_structured_boundary_leaks(monkeypatch):
         blocks=blocks, had_images=False,
     )
     assert reasons["inconsistent_structured_sections"] is True
+
+
+@pytest.mark.parametrize(
+    ("fixture", "post_id", "expected_type", "expected_field"),
+    [
+        ("analogai_377232_live_shape", "377232", "채용공고", "BX/브랜드"),
+        ("gm_design_center_377370_live_shape", "377370", "채용공고", None),
+        ("design_challenge_374979_live_shape", "374979", "공모전", None),
+        ("hyundai_securities_374726_live_shape", "374726", "채용공고", None),
+        ("ptkorea_374565_live_shape", "374565", "채용공고", "UI/UX"),
+    ],
+)
+def test_final_66_explicit_design_titles_are_in_scope(
+    fixture, post_id, expected_type, expected_field,
+):
+    record = parse_post_html(
+        _fixture(fixture), f"https://inthiswork.com/archives/{post_id}"
+    )
+    assert record.content_type == expected_type
+    assert classify_opportunity_scope(record) == "in_scope"
+    if expected_field:
+        assert expected_field in record.design_fields
+
+
+def test_onplanet_mixed_roles_are_safely_excluded_without_isolated_body():
+    record = parse_post_html(
+        _fixture("onplanet_378088_live_shape"),
+        "https://inthiswork.com/archives/378088",
+    )
+    assert has_mixed_role_listing(record.role_or_program)
+    assert record.quality_reasons["image_only_content"] is True
+    assert classify_opportunity_scope(record) == "no_isolated_design_role"
+
+
+def test_visual_comic_contest_is_in_scope_but_vague_upcycle_idea_is_not():
+    comic = parse_post_html(
+        _fixture("comic_contest_374937_live_shape"),
+        "https://inthiswork.com/archives/374937",
+    )
+    vague = parse_post_html(
+        _fixture("upcycle_ideas_374959_live_shape"),
+        "https://inthiswork.com/archives/374959",
+    )
+    assert comic.content_type == "공모전"
+    assert classify_opportunity_scope(comic) == "in_scope"
+    assert "캐릭터/일러스트" in comic.design_fields
+    assert comic.target_audience == "누구나"
+    assert comic.qualifications == ""
+    assert classify_opportunity_scope(vague) == "non_design_opportunity"
+
+
+def test_vacatio_typo_qualification_heading_and_tip_boundary():
+    record = parse_post_html(
+        _fixture("vacatio_377752_live_shape"),
+        "https://inthiswork.com/archives/377752",
+    )
+    assert record.key_duties.splitlines() == [
+        "제품 전반(Web/App)의 UI 설계 및 구현",
+        "Product 개선을 위해 데이터를 기반으로 문제 도출 및 해결",
+        "디자인 시스템 구축 및 브랜드 가이드라인 정립",
+    ]
+    assert record.qualifications == "Figma를 활용한 UI 설계 경험\n사용자 문제를 구조화하는 역량"
+    assert "TIP" not in record.key_duties + record.qualifications
+    assert record.preferred_qualifications == ""
+    assert record.essay_questions == ""
+    assert record.collection_status == "정상"
+    assert record.quality_reasons["inconsistent_structured_sections"] is False
+
+
+def test_ziro_preferred_benefits_and_process_boundaries():
+    record = parse_post_html(
+        _fixture("ziro_377710_live_shape"),
+        "https://inthiswork.com/archives/377710",
+    )
+    assert record.key_duties == "사용자 UX 설계\nGUI 디자인\nUX Writing"
+    assert record.qualifications == "Figma 활용 역량\n제품 디자인 경험"
+    assert record.preferred_qualifications == "디자인 시스템 구축 경험\nB2B 제품 경험"
+    assert record.benefits_prize == "유연 근무와 장비 지원"
+    structured = record.qualifications + record.preferred_qualifications
+    assert "채용 단계" not in structured and "서류 전형" not in structured
+
+
+def test_kream_needed_skills_preferred_conditions_and_process_boundaries():
+    record = parse_post_html(
+        _fixture("kream_375172_live_shape"),
+        "https://inthiswork.com/archives/375172",
+    )
+    assert record.key_duties == "서비스 화면과 사용자 경험을 디자인합니다.\n디자인 시스템을 운영합니다."
+    assert record.qualifications == "Figma 활용 능력\n논리적인 커뮤니케이션 역량"
+    assert record.preferred_qualifications == "커머스 서비스 경험\n프로토타이핑 경험"
+    assert "6개월" not in record.preferred_qualifications
+    assert "전형" not in record.preferred_qualifications
+
+
+def test_oneeleven_live_emoji_sections_are_split_at_work_conditions():
+    record = parse_post_html(
+        _fixture("oneeleven_374710_live_shape"),
+        "https://inthiswork.com/archives/374710",
+    )
+    assert len(record.key_duties.splitlines()) == 3
+    assert len(record.qualifications.splitlines()) == 4
+    assert len(record.preferred_qualifications.splitlines()) == 4
+    assert "근무 조건" not in record.preferred_qualifications
+    assert "합류 여정" not in record.preferred_qualifications
+    assert record.collection_status == "정상"
+
+
+def test_nsapia_pipe_sections_and_generic_task_process_are_handled():
+    record = parse_post_html(
+        _fixture("nsapia_374480_live_shape"),
+        "https://inthiswork.com/archives/374480",
+    )
+    assert record.key_duties == (
+        "신규 아바타 서비스 주요 화면 UI/UX 디자인\n관계 구조와 User Flow 시각화"
+    )
+    assert record.qualifications == (
+        "관련 경력 2년 이상 및 Figma 숙련\nUI/UX 화면 구조와 인터랙션 제안 역량"
+    )
+    assert record.preferred_qualifications == (
+        "모바일 앱 출시·프로젝트 경험\nZ세대 대상 비주얼 아트워크 감각"
+    )
+    assert record.pre_assignment == ""
+    assert record.collection_status == "정상"
+    assert record.quality_reasons["inconsistent_structured_sections"] is False
+
+
+@pytest.mark.parametrize(
+    "leaked",
+    [
+        "필요 역량", "필요 역랑 및 경험", "우대 조건", "서류 작성 TIP",
+        "혜택 및 복지", "채용 단계", "채용 절차", "합류 여정",
+        "전형절차 및 안내 사항", "처우협의", "최종합격",
+    ],
+)
+def test_final_66_structured_boundary_leaks_are_inconsistent(leaked):
+    blocks = [ContentBlock(kind="paragraph", text=leaked)]
+    sections = {
+        "key_duties": leaked,
+        "target_audience": "",
+        "qualifications": "",
+        "preferred_qualifications": "",
+        "essay_questions": "",
+        "pre_assignment": "",
+    }
+    assert _structured_sections_are_consistent(blocks, sections) is False
