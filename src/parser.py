@@ -70,17 +70,19 @@ SECTION_HEADINGS = {
         "이런 분과 함께하고 싶어요", "지원 자격", "자격 요건", "필수 사항", "지원 대상",
     ),
     "preferred": (
-        "이런 분이면 더더욱 환영해요", "이런 경험이 있다면 더욱 좋아요", "이번 채용은 이런 분을 우대해요",
+        "이런 분이면 더더욱 환영해요", "이런 경험이 있다면 더욱 좋아요",
+        "이런 경험이 있다면 더 좋아요", "이번 채용은 이런 분을 우대해요",
         "우대 사항",
     ),
     "benefits": (
         "혜택", "혜택 및 복지", "복지", "복리후생", "디밀은 이렇게 일해요", "이런 혜택을 드려요",
         "지원 내용", "참여 혜택", "활동 혜택", "상금", "시상 내역",
     ),
-    "conditions": ("근무 환경", "근무 조건", "근무 장소", "근무지"),
+    "conditions": ("근무 환경", "근무 조건", "근무 장소", "근무지", "꼭 확인해주세요"),
     "process": (
         "채용은 이렇게 진행돼요", "전형 절차 및 일정", "지원 전 꼭 확인해 주세요", "참고 사항",
-        "지원서류", "인재영입 프로세스", "채용 절차",
+        "지원서류", "인재영입 프로세스", "채용 절차", "이력서는 이렇게 작성하시는 걸 추천해요",
+        "토스로의 합류여정",
     ),
 }
 SECTION_HEADING_VALUES = tuple(
@@ -94,6 +96,12 @@ INLINE_SECTION_RE = re.compile(rf"\[\s*(?:{SECTION_TITLE_PATTERN})\s*\]|(?:{SECT
 DECORATION_ONLY_RE = re.compile(r"^[\sㆍ•·\-–—😉❤❤️♡]+$")
 COMPACT_BULLET_RE = re.compile(r"^[ㆍ•·]\s*(\S.*)$")
 SPACED_BULLET_RE = re.compile(r"^[\-–—]\s+(\S.*)$")
+RESUME_GUIDANCE_RE = re.compile(
+    r"(?:이력서|지원서).*?(?:작성|기재)|"
+    r"개인\s*인적\s*사항.*?(?:시기|기재)|"
+    r"학력.*?대외활동.*?인턴.*?(?:시기|작성|기재)",
+    re.I,
+)
 MIN_RENDER_REPEAT_BLOCKS = 6
 MIN_RENDER_REPEAT_CHARS = 180
 MIN_UNRESOLVED_REPEAT_BLOCKS = 4
@@ -161,7 +169,57 @@ def _is_complete_render_repeat(
     sequence = blocks[first_start : first_start + size]
     heading_count = sum(block.kind.startswith("heading") for block in sequence)
     covers_body = first_start == 0 and second_start + size == len(blocks)
-    return covers_body or heading_count >= 2
+    return first_start == 0 or covers_body or heading_count >= 2
+
+
+def _heading_has_content(blocks: list[ContentBlock], heading_index: int) -> bool:
+    for block in blocks[heading_index + 1 :]:
+        if block.kind.startswith("heading"):
+            return False
+        if block.kind != "divider" and block.text:
+            return True
+    return False
+
+
+def _render_completeness_score(blocks: list[ContentBlock]) -> tuple[int, ...]:
+    duty_heading_indexes = [
+        index
+        for index, block in enumerate(blocks)
+        if block.kind.startswith("heading")
+        and re.search("|".join(_heading_patterns("duties")), block.text, re.I)
+    ]
+    duties_have_content = any(
+        _heading_has_content(blocks, index) for index in duty_heading_indexes
+    )
+    late_section_patterns = (
+        _heading_patterns("audience")
+        + _heading_patterns("preferred")
+        + _heading_patterns("conditions")
+        + _heading_patterns("process")
+    )
+    late_section_count = sum(
+        block.kind.startswith("heading")
+        and bool(re.search("|".join(late_section_patterns), block.text, re.I))
+        for block in blocks
+    )
+    heading_indexes = [
+        index for index, block in enumerate(blocks) if block.kind.startswith("heading")
+    ]
+    last_heading_has_content = bool(
+        not heading_indexes or _heading_has_content(blocks, heading_indexes[-1])
+    )
+    list_item_count = sum(
+        block.kind in {"bulleted_list_item", "numbered_list_item"} for block in blocks
+    )
+    return (
+        int(duties_have_content),
+        late_section_count,
+        int(last_heading_has_content),
+        list_item_count,
+        len(heading_indexes),
+        _sequence_text_length(blocks),
+        len(blocks),
+    )
 
 
 def _remove_duplicate_renderings(blocks: list[ContentBlock]) -> list[ContentBlock]:
@@ -181,8 +239,16 @@ def _remove_duplicate_renderings(blocks: list[ContentBlock]) -> list[ContentBloc
         )
         if repeated is None:
             break
-        _, second_start, size = repeated
-        del result[second_start : second_start + size]
+        first_start, second_start, _ = repeated
+        first_render = result[first_start:second_start]
+        second_render = result[second_start:]
+        selected = (
+            second_render
+            if _render_completeness_score(second_render)
+            > _render_completeness_score(first_render)
+            else first_render
+        )
+        result = [*result[:first_start], *selected]
 
     seen_headings: set[str] = set()
     cleaned: list[ContentBlock] = []
@@ -526,12 +592,6 @@ def classify_content(title: str, categories: list[str], body_text: str) -> str:
     combined = f"{title}\n{body_text[:5000]}".lower()
     if re.search(r"공모전|콘테스트|competition|contest", combined):
         return "공모전"
-    if re.search(r"대외활동|서포터즈|기자단|앰배서더|크루\s*모집|봉사단", combined):
-        return "대외활동"
-    if "교육/대외활동" in categories and re.search(
-        r"교육|부트캠프|아카데미|워크숍|세미나|멘토링|과정|프로그램", combined
-    ):
-        return "교육·프로그램"
 
     has_job_category = any(cat in categories for cat in ["신입/인턴", "주니어경력"])
     has_job_sections = bool(
@@ -545,6 +605,12 @@ def classify_content(title: str, categories: list[str], body_text: str) -> str:
     )
     if has_job_category or has_job_title or (has_job_sections and has_job_title):
         return "채용공고"
+    if re.search(r"대외활동|서포터즈|기자단|앰배서더|크루\s*모집|봉사단", combined):
+        return "대외활동"
+    if "교육/대외활동" in categories and re.search(
+        r"교육|부트캠프|아카데미|워크숍|세미나|멘토링|과정|프로그램", combined
+    ):
+        return "교육·프로그램"
     if editorial_signal or any(cat in categories for cat in ["커리어TV", "취업토크"]):
         return "커리어 콘텐츠"
     if re.search(r"교육|부트캠프|아카데미|워크숍|세미나|멘토링", combined):
@@ -593,7 +659,10 @@ def detect_design_fields(title: str, body_text: str) -> list[str]:
 def extract_experience(title: str, categories: list[str], body_text: str, content_type: str) -> tuple[str, str]:
     if content_type != "채용공고":
         return "해당 없음", ""
-    text = f"{title}\n{body_text[:8000]}"
+    experience_lines = [
+        line for line in body_text[:8000].splitlines() if not RESUME_GUIDANCE_RE.search(line)
+    ]
+    text = "\n".join([title, *experience_lines])
     range_match = re.search(r"신입\s*[~·/및-]+\s*(\d+)\s*년", text)
     if range_match:
         return "경력무관", clean_text(range_match.group(0))
@@ -626,6 +695,7 @@ def extract_employment_types(title: str, body_text: str, content_type: str) -> l
         line for line in body_text[:10000].splitlines()
         if re.search(r"고용\s*형태|근무\s*형태|근무\s*조건|채용\s*형태|인턴|아르바이트|알바|계약직|파트\s*타임", line, re.I)
         and not re.search(r"향후|추후|공고에\s*지원|지원하더라도", line, re.I)
+        and not RESUME_GUIDANCE_RE.search(line)
     ]
     text = "\n".join([title, *relevant_lines])
     rules = [
