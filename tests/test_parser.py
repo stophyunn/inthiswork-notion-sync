@@ -302,37 +302,155 @@ def test_short_accidental_sequence_repetition_is_preserved_without_review():
 
 def test_tossbank_complete_repeated_body_keeps_one_full_render():
     html = _fixture("tossbank_visual_design_assistant_live")
-    source_url = "https://inthiswork.com/archives/600010"
+    source_url = "https://inthiswork.com/archives/378352"
 
     record = parse_post_html(html, source_url, fallback_categories=["신입/인턴"])
 
     duties = [
-        "브랜딩/마케팅 콘텐츠를 디자인해요.",
-        "이미지와 PPT 제작을 서포트해요.",
-        "이벤트 디자인 업무를 서포트해요.",
+        "브랜딩/마케팅에 필요한 다양한 콘텐츠(인스타그램 이미지·영상, 배너, 썸네일 등)를 디자인해요.",
+        "대내외 커뮤니케이션을 위한 이미지와 PPT 제작을 서포트해요.",
+        "인터널 이벤트 전반에 필요한 디자인 관련 업무를 서포트해요. (포스터, 굿즈 제작 등)",
     ]
+    qualification = (
+        "Figma, Photoshop, Illustrator 등 그래픽 툴을 능숙하게 활용하며, "
+        "디자인 제작 요청에 맞춰 다양한 그래픽을 기획하고 제작할 수 있는 분을 찾고 있어요."
+    )
+    preferred = "모션/3D, 레터링 등 다양한 아트웍 제작 경험이 있다면 이 포지션과 잘 맞아요."
+    contract = "고용 형태는 단기계약직으로 진행되고, 계약기간은 입사일로부터 3개월이에요."
     texts = [block.text for block in record.body_blocks]
     assert all(text in texts for text in duties)
     assert all(texts.count(text) == 1 for text in duties)
-    assert "Figma, Photoshop, Illustrator를 활용할 수 있는 분" in texts
-    assert "계약기간은 3개월이에요." in texts
-    assert "지원하기" not in texts
+    assert qualification in texts
+    assert preferred in texts
+    assert contract in texts
+    assert all(text not in {"지원하기", "지원하러 가기"} for text in texts)
+    assert texts.count("토스뱅크 소속") == 1
     assert len(texts) == len(set((block.kind, block.text) for block in record.body_blocks))
     assert [texts.index(text) for text in duties] == sorted(texts.index(text) for text in duties)
     assert record.quality_reasons["unresolved_repetition"] is False
+    assert record.quality_reasons["missing_job_duties"] is False
     assert record.collection_status == "정상"
     assert record.employment_types == ["계약직"]
+    assert record.experience_class == "신입"
     assert record.key_duties == "\n".join(duties)
-    assert record.target_audience == "Figma, Photoshop, Illustrator를 활용할 수 있는 분"
+    assert qualification in record.target_audience
     assert all(duty in texts for duty in record.key_duties.splitlines())
-    assert record.target_audience in texts
+    assert all(line in texts for line in record.target_audience.splitlines())
+    assert record.body_blocks[-1].text != "합류하면 함께 할 업무예요"
 
     single_soup = BeautifulSoup(html, "html.parser")
-    single_soup.select_one(".mobile-render").decompose()
+    single_soup.select_one(".fusion-content-tb-1").decompose()
     single_record = parse_post_html(
         str(single_soup), source_url, fallback_categories=["신입/인턴"]
     )
     assert record.content_hash == single_record.content_hash
+
+
+def test_tossbank_incomplete_first_render_selects_complete_second_render():
+    soup = BeautifulSoup(_fixture("tossbank_visual_design_assistant_live"), "html.parser")
+    first_render = soup.select_one(".fusion-content-tb-1")
+    duty_heading = next(
+        child
+        for child in first_render.find_all(recursive=False)
+        if child.get_text(" ", strip=True) == "합류하면 함께 할 업무예요"
+    )
+    for sibling in list(duty_heading.find_next_siblings()):
+        sibling.decompose()
+
+    record = parse_post_html(
+        str(soup),
+        "https://inthiswork.com/archives/378352",
+        fallback_categories=["신입/인턴"],
+    )
+    texts = [block.text for block in record.body_blocks]
+
+    assert texts.count("토스뱅크 소속") == 1
+    assert "브랜딩/마케팅에 필요한 다양한 콘텐츠(인스타그램 이미지·영상, 배너, 썸네일 등)를 디자인해요." in texts
+    assert "Figma, Photoshop, Illustrator 등 그래픽 툴을 능숙하게 활용하며, 디자인 제작 요청에 맞춰 다양한 그래픽을 기획하고 제작할 수 있는 분을 찾고 있어요." in texts
+    assert "모션/3D, 레터링 등 다양한 아트웍 제작 경험이 있다면 이 포지션과 잘 맞아요." in texts
+    assert "고용 형태는 단기계약직으로 진행되고, 계약기간은 입사일로부터 3개월이에요." in texts
+    assert record.quality_reasons["unresolved_repetition"] is False
+    assert record.quality_reasons["missing_job_duties"] is False
+    assert record.collection_status == "정상"
+
+
+def test_job_ending_at_duty_heading_requires_review():
+    soup = BeautifulSoup(_fixture("tossbank_visual_design_assistant_live"), "html.parser")
+    soup.select_one(".fusion-content-tb-2").decompose()
+    first_render = soup.select_one(".fusion-content-tb-1")
+    duty_heading = next(
+        child
+        for child in first_render.find_all(recursive=False)
+        if child.get_text(" ", strip=True) == "합류하면 함께 할 업무예요"
+    )
+    for sibling in list(duty_heading.find_next_siblings()):
+        sibling.decompose()
+
+    record = parse_post_html(
+        str(soup),
+        "https://inthiswork.com/archives/378352",
+        fallback_categories=["신입/인턴"],
+    )
+
+    assert record.body_blocks[-1].text == "합류하면 함께 할 업무예요"
+    assert record.key_duties == ""
+    assert record.quality_reasons["missing_job_duties"] is True
+    assert record.collection_status == "검토 필요"
+
+
+def test_short_common_prefix_keeps_both_unique_tails():
+    html = """
+    <html><head><meta property="og:title" content="회사｜콘텐츠 디자이너 채용" /></head>
+    <body><article><div class="fusion-content-tb">
+    <p>공통 소개</p><h2>수행 업무</h2><p>첫 번째 고유 업무</p>
+    <p>공통 소개</p><h2>수행 업무</h2><p>두 번째 고유 업무</p>
+    </div></article></body></html>
+    """
+
+    record = parse_post_html(html, "https://inthiswork.com/archives/600011")
+    texts = [block.text for block in record.body_blocks]
+
+    assert "첫 번째 고유 업무" in texts
+    assert "두 번째 고유 업무" in texts
+    assert sum(text == "수행 업무" for text in texts) == 2
+
+
+def test_job_category_wins_over_incidental_activity_word_in_resume_guidance():
+    html = """
+    <html><head><meta property="og:title" content="회사｜Visual Design Assistant" /></head>
+    <body><article><div class="fusion-content-tb">
+    <h2>수행 업무</h2><p>브랜드 콘텐츠 디자인을 지원해요.</p>
+    <p>학력, 대외활동, 인턴 시기를 명확하게 작성해 주세요.</p>
+    <p>고용 형태는 단기계약직이에요.</p>
+    </div></article></body></html>
+    """
+
+    record = parse_post_html(
+        html,
+        "https://inthiswork.com/archives/600012",
+        fallback_categories=["신입/인턴"],
+    )
+
+    assert record.content_type == "채용공고"
+    assert record.employment_types == ["계약직"]
+    assert record.quality_reasons["missing_job_duties"] is False
+
+    explicit_intern_html = """
+    <html><head><meta property="og:title" content="회사｜Design Assistant" /></head>
+    <body><article><div class="fusion-content-tb">
+    <h2>수행 업무</h2><p>대외활동 콘텐츠를 디자인해요.</p>
+    <p>고용 형태는 인턴이며 관련 디자인 업무를 수행해요.</p>
+    </div></article></body></html>
+    """
+    explicit_intern_record = parse_post_html(
+        explicit_intern_html,
+        "https://inthiswork.com/archives/600013",
+        fallback_categories=["신입/인턴"],
+    )
+
+    assert explicit_intern_record.content_type == "채용공고"
+    assert explicit_intern_record.employment_types == ["인턴"]
+    assert explicit_intern_record.experience_class == "인턴"
 
 
 def test_hyundai_livart_image_only_post_still_requires_review():

@@ -12,10 +12,22 @@ from .http_client import (
     SiteNotFoundError,
     SiteRateLimitedError,
 )
+from .models import PostRecord
 from .notion_api import NotionClient
 from .scraper import InThisWorkScraper
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _dry_run_preview(record: PostRecord) -> dict[str, object]:
+    preview = asdict(record)
+    blocks = preview.pop("body_blocks")
+    assert isinstance(blocks, list)
+    preview["body_blocks_total"] = len(blocks)
+    preview["body_blocks_omitted"] = max(0, len(blocks) - 8)
+    preview["body_blocks_preview"] = blocks[:8]
+    preview["body_blocks_last"] = blocks[-1] if blocks else None
+    return preview
 
 
 def main() -> None:
@@ -99,8 +111,7 @@ def main() -> None:
                             record.post_id,
                             ", ".join(active_reasons),
                         )
-                    preview = asdict(record)
-                    preview["body_blocks"] = [asdict(block) for block in record.body_blocks[:8]]
+                    preview = _dry_run_preview(record)
                     print(json.dumps(preview, ensure_ascii=False, indent=2))
                     counters["skipped"] += 1
                     continue
