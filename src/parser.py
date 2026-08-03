@@ -61,6 +61,7 @@ NOISE_SELECTORS = [
 
 SECTION_HEADINGS = {
     "duties": (
+        "우리 팀과 함께할 미션을 소개합니다", "함께할 미션을 소개합니다",
         "합류하면 아래와 같은 업무를 하게 됩니다",
         "저희와 함께 하시게 될 일들이에요", "저희와 함께 하게 될 일들이에요",
         "함께 하시게 될 일들이에요", "함께 하게 될 일들이에요",
@@ -130,6 +131,9 @@ SECTION_BOUNDARY_HEADINGS = (
     "성장 지원", "성장을 위한 전폭적인 지원",
     "이렇게 성장할 수 있어요", "이렇게 성장할 수 있습니다",
     "합류 여정 안내드려요", "바이트랩 합류 여정 안내드려요",
+    "크래프톤의 도전에 함께 하기 위해 아래의 전형 과정이 필요합니다",
+    "아래의 전형 과정이 필요합니다", "전형 과정",
+    "필요 서류를 확인해주세요", "아래 안내 사항을 확인해주세요",
 )
 SECTION_HEADING_VALUES = tuple(
     heading for headings in SECTION_HEADINGS.values() for heading in headings
@@ -220,6 +224,10 @@ def _exact_section_kind(text: str) -> str | None:
         r".+?는\s*두\s*가지\s*방식으로\s*지원할\s*수\s*있어요", candidate, re.I
     ):
         return "boundary"
+    if len(candidate) <= 100 and re.fullmatch(
+        r".+?로서\s*하게\s*될\s*일은\s*다음과\s*같습니다", candidate, re.I
+    ):
+        return "duties"
     if re.fullmatch(r"(?:Design|Service\s*&\s*Business)\s*>.*", candidate, re.I):
         return "boundary"
     return None
@@ -791,7 +799,9 @@ def _all_text(blocks: Iterable[ContentBlock]) -> str:
     return "\n".join(block.text for block in blocks if block.text)
 
 
-def classify_content(title: str, categories: list[str], body_text: str) -> str:
+def classify_content(
+    title: str, categories: list[str], body_text: str, apply_url: str | None = None
+) -> str:
     combined = f"{title}\n{body_text[:5000]}".lower()
     if re.search(r"공모전|콘테스트|competition|contest", combined):
         return "공모전"
@@ -801,12 +811,23 @@ def classify_content(title: str, categories: list[str], body_text: str) -> str:
         re.search(r"주요\s*업무|자격\s*요건|지원\s*자격|채용\s*절차|근무\s*조건", combined)
     )
     has_job_title = bool(
-        re.search(r"채용|인턴|신입|경력|디자이너|designer|아르바이트|알바|정규직|계약직", title, re.I)
+        re.search(
+            r"채용|인턴|신입|경력|디자이너|designer|아르바이트|알바|정규직|계약직|"
+            r"developer|engineer|manager|scientist|assistant|\bRA\b",
+            title,
+            re.I,
+        )
     )
+    has_job_url = bool(apply_url and re.search(
+        r"(?:/careers?(?:/|$)|/career/job-detail|/jobs?(?:/|$)|/job_posting/|"
+        r"greetinghr\.com|greenhouse\.io|recruit|careers)",
+        apply_url,
+        re.I,
+    ))
     editorial_signal = bool(
         re.search(r"인터뷰|포트폴리오|취업토크|커리어|노하우|필요한가\??|하는 법", title)
     )
-    if has_job_category or has_job_title or (has_job_sections and has_job_title):
+    if has_job_category or has_job_title or has_job_url or (has_job_sections and has_job_title):
         return "채용공고"
     if re.search(r"대외활동|서포터즈|기자단|앰배서더|크루\s*모집|봉사단", combined):
         return "대외활동"
@@ -819,6 +840,54 @@ def classify_content(title: str, categories: list[str], body_text: str) -> str:
     if re.search(r"교육|부트캠프|아카데미|워크숍|세미나|멘토링", combined):
         return "교육·프로그램"
     return "기타·확인 필요"
+
+
+DESIGN_ROLE_RE = re.compile(
+    r"(?:디자이너|일러스트레이터|디자인\s*(?:직무|인턴|어시스턴트)|"
+    r"(?:프로덕트|제품|UI\s*/?\s*UX|UX\s*/?\s*UI|UI|UX|"
+    r"비주얼|그래픽|콘텐츠|브랜드|BX|모션|캐릭터|공간|패션)\s*디자인(?:\s*(?:직무|인턴))?|"
+    r"Product\s+Designer|Visual\s+Designer|Graphic\s+Designer|UI\s+Designer|UX\s+Designer|"
+    r"Brand\s+Designer|Content\s+Designer|Motion\s+Designer|Design\s+Assistant|Design\s+Intern)",
+    re.I,
+)
+NON_DESIGN_ROLE_RE = re.compile(
+    r"(?:Developer|Engineer|Software\s+Engineer|Research\s+Scientist|Research\s+Assistant|\bRA\b|"
+    r"Data\s+Scientist|ML\s+Engineer|AI\s+Engineer|Product\s+Manager|Product\s+Owner|Marketer|"
+    r"Marketing|Sales|Operation|Planning|기획|운영|개발|연구|영업|인사|재무)",
+    re.I,
+)
+DESIGN_PROGRAM_RE = re.compile(
+    r"(?:디자인|디자이너|UI\s*/?\s*UX|UX\s*/?\s*UI|시각디자인|프로덕트\s*디자인|"
+    r"Product\s+Design|Visual\s+Design|Graphic\s+Design|Design\s+(?:Contest|Competition|Program))",
+    re.I,
+)
+MIXED_ROLE_RE = re.compile(
+    r"(?:관리|마케팅|영업|디자인|개발|연구)(?:\s*[/·,]\s*(?:관리|마케팅|영업|디자인|개발|연구)){2,}",
+    re.I,
+)
+
+
+def classify_opportunity_scope(record: PostRecord) -> str:
+    """Return ``in_scope`` or a stable exclusion reason for final output."""
+    role_text = clean_text(record.role_or_program or record.title)
+    path_lines = [_strip_heading_wrapper(block.text) for block in record.body_blocks]
+    has_design_path = any(re.match(r"^Design\s*>", line, re.I) for line in path_lines)
+    has_service_path = any(
+        re.match(r"^Service\s*&\s*Business\s*>", line, re.I) for line in path_lines
+    )
+    if record.content_type == "채용공고":
+        if has_service_path:
+            return "non_design_role"
+        if has_design_path or DESIGN_ROLE_RE.search(role_text):
+            return "in_scope"
+        if MIXED_ROLE_RE.search(role_text) or (
+            "디자인" in role_text and NON_DESIGN_ROLE_RE.search(role_text)
+        ):
+            return "ambiguous_mixed_roles" if record.body_blocks else "no_isolated_design_role"
+        return "non_design_role"
+    if record.content_type in {"공모전", "대외활동", "교육·프로그램"}:
+        return "in_scope" if DESIGN_PROGRAM_RE.search(role_text) else "non_design_opportunity"
+    return "non_design_opportunity"
 
 
 def split_title(title: str, content_type: str, body_text: str) -> tuple[str, str]:
@@ -1279,7 +1348,7 @@ def parse_post_html(
     apply_url = extract_apply_url(soup, source_url)
     body_blocks, had_images, repeated_body = extract_body_blocks(soup)
     body_text = _all_text(body_blocks)
-    content_type = classify_content(title, categories, body_text)
+    content_type = classify_content(title, categories, body_text, apply_url)
     organization, role = split_title(title, content_type, body_text)
     experience_class, experience_raw = extract_experience(
         title, categories, body_text, content_type
