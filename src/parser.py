@@ -853,7 +853,8 @@ DESIGN_ROLE_RE = re.compile(
 NON_DESIGN_ROLE_RE = re.compile(
     r"(?:Developer|Engineer|Software\s+Engineer|Research\s+Scientist|Research\s+Assistant|\bRA\b|"
     r"Data\s+Scientist|ML\s+Engineer|AI\s+Engineer|Product\s+Manager|Product\s+Owner|Marketer|"
-    r"Marketing|Sales|Operation|Planning|기획|운영|개발|연구|영업|인사|재무)",
+    r"Marketing|Sales|Operation|Planning|개발자|엔지니어|연구원|마케터|컨서베이터|큐레이터|"
+    r"영업\s*담당|인사\s*담당|재무\s*담당|(?<![A-Za-z])MD(?![A-Za-z]))",
     re.I,
 )
 DESIGN_PROGRAM_RE = re.compile(
@@ -861,10 +862,55 @@ DESIGN_PROGRAM_RE = re.compile(
     r"Product\s+Design|Visual\s+Design|Graphic\s+Design|Design\s+(?:Contest|Competition|Program))",
     re.I,
 )
-MIXED_ROLE_RE = re.compile(
-    r"(?:관리|마케팅|영업|디자인|개발|연구)(?:\s*[/·,]\s*(?:관리|마케팅|영업|디자인|개발|연구)){2,}",
+ROLE_LIST_SEPARATOR_RE = re.compile(r"\s*(?:,|/|·|•|\||\b및\b)\s*", re.I)
+GENERIC_NON_DESIGN_ROLE_RE = re.compile(
+    r"^(?:관리|마케팅|영업|기획|운영|개발|연구|인사|재무)"
+    r"(?:\s*(?:직무|직군|부문|담당|매니저))?$",
     re.I,
 )
+DESIGN_LIST_FRAGMENT_RE = re.compile(
+    r"^(?:디자인|UX|UI|UI\s*/?\s*UX|UX\s*/?\s*UI|브랜드|콘텐츠|그래픽|모션|"
+    r"비주얼|프로덕트|Product\s+Design|Visual\s+Design|Graphic\s+Design)$",
+    re.I,
+)
+
+
+def _role_listing_fragments(role_text: str) -> list[str]:
+    if not ROLE_LIST_SEPARATOR_RE.search(role_text):
+        return []
+    fragments = []
+    for fragment in ROLE_LIST_SEPARATOR_RE.split(role_text):
+        value = clean_text(fragment)
+        value = re.sub(r"^[\s()\[\]{}]+|[\s()\[\]{}]+$", "", value)
+        value = re.sub(r"\s*(?:등\s*)?(?:신입\s*및\s*경력)?채용\s*$", "", value)
+        value = re.sub(r"\s*등\s*모집\s*$", "", value)
+        if value:
+            fragments.append(value)
+    return fragments
+
+
+def _is_non_design_role_fragment(fragment: str) -> bool:
+    if DESIGN_ROLE_RE.search(fragment):
+        return False
+    if NON_DESIGN_ROLE_RE.search(fragment):
+        return True
+    return bool(GENERIC_NON_DESIGN_ROLE_RE.fullmatch(fragment))
+
+
+def _is_design_role_fragment(fragment: str) -> bool:
+    return bool(
+        DESIGN_ROLE_RE.search(fragment) or DESIGN_LIST_FRAGMENT_RE.fullmatch(fragment)
+    )
+
+
+def has_mixed_role_listing(role_text: str) -> bool:
+    """Detect a delimiter-separated list containing design and non-design roles."""
+    fragments = _role_listing_fragments(clean_text(role_text))
+    if len(fragments) < 2:
+        return False
+    return any(_is_design_role_fragment(item) for item in fragments) and any(
+        _is_non_design_role_fragment(item) for item in fragments
+    )
 
 
 def classify_opportunity_scope(record: PostRecord) -> str:
@@ -878,12 +924,14 @@ def classify_opportunity_scope(record: PostRecord) -> str:
     if record.content_type == "채용공고":
         if has_service_path:
             return "non_design_role"
+        mixed_roles = has_mixed_role_listing(role_text)
+        if mixed_roles and not has_design_path:
+            no_readable_body = not record.body_blocks or record.quality_reasons.get(
+                "image_only_content", False
+            )
+            return "no_isolated_design_role" if no_readable_body else "ambiguous_mixed_roles"
         if has_design_path or DESIGN_ROLE_RE.search(role_text):
             return "in_scope"
-        if MIXED_ROLE_RE.search(role_text) or (
-            "디자인" in role_text and NON_DESIGN_ROLE_RE.search(role_text)
-        ):
-            return "ambiguous_mixed_roles" if record.body_blocks else "no_isolated_design_role"
         return "non_design_role"
     if record.content_type in {"공모전", "대외활동", "교육·프로그램"}:
         return "in_scope" if DESIGN_PROGRAM_RE.search(role_text) else "non_design_opportunity"
@@ -1263,7 +1311,17 @@ def extract_deadline(body_text: str, published_date: str | None) -> str | None:
 
 def determine_status(title: str, body_text: str, deadline: str | None) -> str:
     leading = f"{title}\n{body_text[:2500]}"
-    if re.search(r"마감된\s*공고|공고는\s*마감|모집\s*마감|접수\s*마감|비공개", leading, re.I):
+    explicit_closed = bool(
+        re.search(r"마감된\s*공고|공고는\s*비공개", leading, re.I)
+        or re.search(
+            r"(?:^|\n)\s*(?:지원\s*종료|모집\s*종료|채용\s*마감|"
+            r"접수(?:가|는)?\s*종료(?:되었습니다)?|지원(?:이)?\s*종료(?:되었습니다)?)"
+            r"\s*[.!！。]?\s*(?:$|\n)",
+            leading,
+            re.I,
+        )
+    )
+    if explicit_closed:
         return "마감"
     if deadline:
         try:
