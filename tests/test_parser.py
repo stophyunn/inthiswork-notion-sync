@@ -1297,17 +1297,23 @@ def test_hyundai_securities_live_star_and_common_qualification_sections():
         "https://inthiswork.com/archives/374726",
     )
     assert len(record.key_duties.splitlines()) == 6
-    assert len(record.qualifications.splitlines()) == 6
+    assert record.qualifications.splitlines() == [
+        "Adobe Illustrator, Photoshop 등 기본 디자인 툴 활용능력",
+        "피그마 활용 능통자",
+        "온라인 프로모션/SNS 콘텐츠 디자인 유경험자",
+        "포트폴리오 필수 제출",
+        "해외여행 및 건강상 결격사유 없는 자",
+        "남성의 경우 병역 필 또는 면제자",
+    ]
     assert len(record.preferred_qualifications.splitlines()) == 3
-    assert record.qualifications.endswith(
-        "해외여행 및 건강상 결격사유 없는 자\n남성의 경우 병역 필 또는 면제자"
-    )
     assert "공통지원자격" not in record.preferred_qualifications
     assert "해외여행" not in record.preferred_qualifications
     structured = "\n".join((
         record.key_duties, record.qualifications, record.preferred_qualifications,
     ))
     assert "*" not in structured
+    assert "자격요건" not in structured
+    assert "공통지원자격" not in structured
     assert record.collection_status == "정상"
     assert record.quality_reasons["inconsistent_structured_sections"] is False
 
@@ -1330,3 +1336,68 @@ def test_emoji_and_decoration_structured_leaks_are_inconsistent(leaked):
         "pre_assignment": "",
     }
     assert _structured_sections_are_consistent(blocks, sections) is False
+
+
+def test_qualification_candidates_with_different_priorities_are_combined_in_source_order():
+    html = """
+    <html><head><meta property='og:title' content='현대차증권｜마케팅 디자인 담당자 채용'></head>
+    <body><article><h3>주요 업무</h3><p>마케팅 디자인</p>
+    <p>이런 경험이 있는 분을 찾고 있어요</p>
+    <p>Adobe Illustrator, Photoshop 등 기본 디자인 툴 활용능력</p>
+    <p>피그마 활용 능통자</p>
+    <p>온라인 프로모션/SNS 콘텐츠 디자인 유경험자</p>
+    <p>포트폴리오 필수 제출</p>
+    <h3>우대사항</h3><p>금융 서비스 경험</p><p>브랜드 경험</p><p>협업 경험</p>
+    <p>혜택 및 복지</p><p>복지 항목</p><p>채용 단계</p><p>서류 전형</p>
+    <h3>공통지원자격</h3><p>해외여행 및 건강상 결격사유 없는 자</p>
+    <p>남성의 경우 병역 필 또는 면제자</p><p>근무환경</p><p>서울 근무</p>
+    </article></body></html>
+    """
+    record = parse_post_html(html, "https://inthiswork.com/archives/600021")
+    assert record.qualifications.splitlines() == [
+        "Adobe Illustrator, Photoshop 등 기본 디자인 툴 활용능력",
+        "피그마 활용 능통자",
+        "온라인 프로모션/SNS 콘텐츠 디자인 유경험자",
+        "포트폴리오 필수 제출",
+        "해외여행 및 건강상 결격사유 없는 자",
+        "남성의 경우 병역 필 또는 면제자",
+    ]
+    assert record.preferred_qualifications == "금융 서비스 경험\n브랜드 경험\n협업 경험"
+    assert not any(value in record.qualifications for value in (
+        "우대사항", "혜택 및 복지", "복지 항목", "채용 단계", "서류 전형",
+        "근무환경", "서울 근무",
+    ))
+
+
+def test_repeated_qualification_candidates_deduplicate_exact_lines():
+    html = """
+    <html><head><meta property='og:title' content='Example｜Product Designer 채용'></head>
+    <body><article><h3>담당 업무</h3><p>제품 디자인</p>
+    <h3>자격요건</h3><p>Figma 활용 가능자</p><p>포트폴리오 제출 가능자</p>
+    <h3>우대사항</h3><p>협업 경험</p>
+    <h3>공통지원자격</h3><p>포트폴리오 제출 가능자</p><p>해외여행 결격사유 없는 자</p>
+    </article></body></html>
+    """
+    record = parse_post_html(html, "https://inthiswork.com/archives/600022")
+    assert record.qualifications == (
+        "Figma 활용 가능자\n포트폴리오 제출 가능자\n해외여행 결격사유 없는 자"
+    )
+    assert record.qualifications.count("포트폴리오 제출 가능자") == 1
+
+
+def test_subset_superset_and_fully_duplicated_qualification_candidates():
+    html = """
+    <html><head><meta property='og:title' content='Example｜UX Designer 채용'></head>
+    <body><article><h3>담당 업무</h3><p>제품 디자인</p>
+    <p>이런 경험이 있는 분을 찾고 있어요</p>
+    <p>Figma 활용 가능자</p><p>포트폴리오 제출 가능자</p>
+    <h3>우대사항</h3><p>사용자 연구 경험</p>
+    <h3>공통지원자격</h3><p>Figma 활용 가능자</p><p>포트폴리오 제출 가능자</p>
+    <p>협업 경험 보유자</p>
+    <h3>공통 지원 자격</h3><p>Figma 활용 가능자</p><p>포트폴리오 제출 가능자</p>
+    <p>협업 경험 보유자</p></article></body></html>
+    """
+    record = parse_post_html(html, "https://inthiswork.com/archives/600023")
+    assert record.qualifications == (
+        "Figma 활용 가능자\n포트폴리오 제출 가능자\n협업 경험 보유자"
+    )
