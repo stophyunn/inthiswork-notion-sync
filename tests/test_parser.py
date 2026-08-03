@@ -1,7 +1,13 @@
 import pytest
 from bs4 import BeautifulSoup
 
-from src.parser import parse_post_html, parse_post_html_records
+from src.models import ContentBlock
+from src.parser import (
+    _quality_reasons,
+    _structured_sections_are_consistent,
+    parse_post_html,
+    parse_post_html_records,
+)
 
 
 JOB_HTML = """
@@ -682,3 +688,144 @@ def test_multi_role_recomputes_sections_without_copying_ambiguous_common_questio
     assert "Illustrator" not in records[0].qualifications
     assert records[0].essay_questions == ""
     assert records[1].essay_questions == "지원 동기를 작성해 주세요."
+
+
+def test_weavercare_live_boundaries_stop_links_process_and_conditions():
+    record = parse_post_html(
+        _fixture("weavercare_380803_live_shape"),
+        "https://inthiswork.com/archives/380803",
+    )
+    assert record.key_duties == "브랜드 콘텐츠를 디자인합니다.\n캠페인 이미지를 제작합니다."
+    assert "홈페이지" not in record.key_duties
+    assert "채용 전형" not in record.key_duties
+    assert record.qualifications == "디자인 도구 활용이 가능한 분"
+    assert "고용 조건" not in record.qualifications
+    assert record.quality_reasons["inconsistent_structured_sections"] is False
+
+
+def test_eleven_split_wrappers_do_not_leak_between_sections():
+    record = parse_post_html(
+        _fixture("eleven_380755_live_shape"),
+        "https://inthiswork.com/archives/380755",
+    )
+    values = "\n".join(
+        (record.key_duties, record.qualifications, record.preferred_qualifications)
+    )
+    assert record.key_duties == "브랜드 비주얼을 제작합니다."
+    assert record.qualifications == "Figma를 사용할 수 있는 분"
+    assert record.preferred_qualifications == "모션 디자인 경험이 있는 분"
+    assert not any(token in values for token in (
+        ")", "📌", "🎯", "✨", "합류 여정", "포트폴리오", "복리후생"
+    ))
+
+
+def test_infludio_prefers_explicit_duties_after_intro_sections():
+    record = parse_post_html(
+        _fixture("infludio_380723_live_shape"),
+        "https://inthiswork.com/archives/380723",
+    )
+    assert record.key_duties == "제품 경험과 화면을 설계합니다.\n디자인 시스템을 운영합니다."
+    assert "팀 문화" not in record.key_duties
+    assert "채용" not in record.key_duties
+
+
+def test_snow_live_numbered_roles_split_before_section_extraction():
+    records = parse_post_html_records(
+        _fixture("snow_379384_live_shape"),
+        "https://inthiswork.com/archives/379384",
+    )
+    assert [record.post_id for record in records] == ["379384-1", "379384-2"]
+    assert "AI 캐릭터 콘텐츠" in records[0].key_duties
+    assert "서비스 그래픽 에셋" in records[1].key_duties
+    assert "비주얼 콘텐츠" not in records[0].preferred_qualifications
+    assert "지원 시 직군/직무 설정" not in records[0].preferred_qualifications
+
+
+def test_starship_split_qualification_heading_and_deadline_boundary():
+    record = parse_post_html(
+        _fixture("starship_378972_live_shape"),
+        "https://inthiswork.com/archives/378972",
+    )
+    assert record.qualifications == "Photoshop 활용이 가능한 분"
+    assert "요건" not in record.qualifications
+    assert record.preferred_qualifications == "엔터테인먼트 디자인 경험"
+    assert "마감" not in record.preferred_qualifications
+    assert "2026년" not in record.preferred_qualifications
+
+
+def test_linqalpha_discards_decorations_and_culture_boundary():
+    record = parse_post_html(
+        _fixture("linqalpha_380773_live_shape"),
+        "https://inthiswork.com/archives/380773",
+    )
+    assert record.key_duties == "데이터 제품의 사용자 경험을 설계합니다."
+    assert record.qualifications == "Figma를 능숙하게 사용하는 분"
+    assert record.preferred_qualifications == "핀테크 제품 경험이 있는 분"
+    values = "\n".join((record.key_duties, record.qualifications, record.preferred_qualifications))
+    assert not any(token in values for token in ("!", "❖", "🌟", "문화 및"))
+
+
+def test_bytelab_live_strong_paragraph_headings_are_extracted():
+    record = parse_post_html(
+        _fixture("bytelab_378607_live_shape"),
+        "https://inthiswork.com/archives/378607",
+    )
+    assert record.key_duties == "모바일 서비스 UI/UX를 설계합니다."
+    assert record.qualifications == "Figma 기반 포트폴리오가 있는 분"
+    assert record.preferred_qualifications == "디자인 시스템 구축 경험이 있는 분"
+
+
+def test_tossplace_role_prefixed_natural_duties_heading_is_recognized():
+    record = parse_post_html(
+        _fixture("tossplace_378357_live_shape"),
+        "https://inthiswork.com/archives/378357",
+    )
+    assert record.key_duties == (
+        "브랜드 경험을 위한 비주얼을 디자인해요.\n온오프라인 그래픽을 제작해요."
+    )
+    assert record.target_audience == ""
+
+
+def test_structured_consistency_rejects_exact_boundaries_urls_roles_and_wrappers():
+    blocks = [
+        ContentBlock(kind="paragraph", text="정상 업무"),
+        ContentBlock(kind="heading_3", text="채용 전형"),
+        ContentBlock(kind="paragraph", text="https://example.test/jobs"),
+        ContentBlock(kind="paragraph", text="2. 비주얼 콘텐츠 디자인 체험형 인턴"),
+        ContentBlock(kind="paragraph", text=")"),
+    ]
+    empty = {name: "" for name in (
+        "key_duties", "target_audience", "qualifications", "preferred_qualifications",
+        "essay_questions", "pre_assignment",
+    )}
+    for leaked in ("채용 전형", "https://example.test/jobs", "2. 비주얼 콘텐츠 디자인 체험형 인턴", ")"):
+        sections = {**empty, "key_duties": leaked}
+        assert _structured_sections_are_consistent(blocks, sections) is False
+
+
+def test_boundary_words_inside_normal_sentences_do_not_cut_sections():
+    html = """
+    <html><head><meta property='og:title' content='Example｜디자이너 채용'></head><body>
+    <article><h3>담당 업무</h3>
+    <p>채용 전형과 복지 안내 화면을 디자인하고 마감 품질을 관리합니다.</p>
+    <h3>자격요건</h3><p>Figma 사용 가능자</p></article></body></html>
+    """
+    record = parse_post_html(html, "https://inthiswork.com/archives/600009")
+    assert record.key_duties == "채용 전형과 복지 안내 화면을 디자인하고 마감 품질을 관리합니다."
+    assert record.quality_reasons["inconsistent_structured_sections"] is False
+
+
+def test_quality_reason_is_true_when_structured_boundary_leaks(monkeypatch):
+    import src.parser as parser
+
+    blocks = [ContentBlock(kind="paragraph", text="채용 전형")]
+    leaked = {
+        "key_duties": "채용 전형", "target_audience": "", "qualifications": "",
+        "preferred_qualifications": "", "essay_questions": "", "pre_assignment": "",
+    }
+    monkeypatch.setattr(parser, "_structured_sections", lambda *_: leaked)
+    reasons = _quality_reasons(
+        title="Example｜디자이너 채용", content_type="채용공고",
+        blocks=blocks, had_images=False,
+    )
+    assert reasons["inconsistent_structured_sections"] is True
