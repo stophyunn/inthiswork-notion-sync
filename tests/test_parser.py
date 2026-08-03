@@ -1144,6 +1144,53 @@ def test_visual_comic_contest_is_in_scope_but_vague_upcycle_idea_is_not():
     assert classify_opportunity_scope(vague) == "non_design_opportunity"
 
 
+def test_samsung_ai_home_title_only_fixture_is_an_in_scope_interior_design_contest():
+    """The fixture intentionally reproduces only the public title seen in dry-run output."""
+    record = parse_post_html(
+        _fixture("samsung_ai_home_contest_381115_live_shape"),
+        "https://inthiswork.com/archives/381115",
+    )
+
+    assert record.organization == "삼성전자"
+    assert record.role_or_program == "AI HOME 인테리어 디자인 컨테스트"
+    assert record.content_type == "공모전"
+    assert record.design_fields == ["공간/무대"]
+    assert classify_opportunity_scope(record) == "in_scope"
+    assert record.collection_status == "검토 필요"
+    assert record.quality_reasons["missing_body"] is True
+
+
+@pytest.mark.parametrize(
+    "contest_title",
+    [
+        "디자인 컨테스트",
+        "디자인 콘테스트",
+        "Design Contest",
+        "Design Competition",
+        "Design Creation Challenge",
+    ],
+)
+def test_design_contest_spellings_are_classified_as_competitions(contest_title):
+    record = parse_post_html(
+        f"<html><head><title>{contest_title}</title></head><body><article></article></body></html>",
+        "https://inthiswork.com/archives/381116",
+    )
+
+    assert record.content_type == "공모전"
+    assert classify_opportunity_scope(record) == "in_scope"
+
+
+def test_design_office_administration_job_remains_out_of_scope():
+    record = parse_post_html(
+        "<html><head><title>한국카본｜[계약직] 디자인 사무행정 (신입/경력)</title></head>"
+        "<body><article></article></body></html>",
+        "https://inthiswork.com/archives/381208",
+    )
+
+    assert record.content_type == "채용공고"
+    assert classify_opportunity_scope(record) == "non_design_role"
+
+
 def test_vacatio_typo_qualification_heading_and_tip_boundary():
     record = parse_post_html(
         _fixture("vacatio_377752_live_shape"),

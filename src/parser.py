@@ -842,7 +842,11 @@ def classify_content(
     title: str, categories: list[str], body_text: str, apply_url: str | None = None
 ) -> str:
     combined = f"{title}\n{body_text[:5000]}".lower()
-    if re.search(r"공모전|콘테스트|competition|contest|(?:design.*challenge|challenge.*design)", combined):
+    if re.search(
+        r"공모전|컨테스트|콘테스트|competition|contest|"
+        r"(?:design.*challenge|challenge.*design)",
+        combined,
+    ):
         return "공모전"
 
     has_job_category = any(cat in categories for cat in ["신입/인턴", "주니어경력"])
@@ -1011,7 +1015,11 @@ def detect_design_fields(title: str, body_text: str) -> list[str]:
         ("영상/모션", r"영상|모션|motion|video|릴스"),
         ("VMD", r"\bvmd\b|비주얼\s*머천"),
         ("패키지", r"패키지\s*디자|package\s*design"),
-        ("공간/무대", r"공간\s*디자|무대\s*디자|전시\s*디자|spatial"),
+        (
+            "공간/무대",
+            r"인테리어(?:\s*디자인)?|interior\s*design|공간\s*디자|무대\s*디자|"
+            r"전시\s*디자|spatial",
+        ),
         ("웹", r"웹\s*디자|web\s*design"),
         ("캐릭터/일러스트", r"캐릭터|일러스트|illustrat|만화|웹툰|comic"),
         ("산업/제품", r"산업\s*디자|제품\s*디자|industrial\s*design"),
