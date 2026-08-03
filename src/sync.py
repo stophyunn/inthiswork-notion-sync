@@ -14,7 +14,7 @@ from .http_client import (
 )
 from .models import PostRecord
 from .notion_api import NotionClient
-from .parser import heading_candidates
+from .parser import classify_opportunity_scope, heading_candidates
 from .scraper import InThisWorkScraper
 
 LOGGER = logging.getLogger(__name__)
@@ -31,6 +31,33 @@ def _dry_run_preview(record: PostRecord) -> dict[str, object]:
     if record.quality_reasons.get("missing_job_duties"):
         preview["heading_candidates"] = heading_candidates(record.body_blocks)
     return preview
+
+
+def _filter_in_scope_records(
+    records: list[PostRecord], url: str
+) -> tuple[list[PostRecord], dict[str, int]]:
+    included: list[PostRecord] = []
+    counts = {"in_scope": 0, "filtered_non_design": 0, "filtered_ambiguous": 0}
+    for record in records:
+        reason = classify_opportunity_scope(record)
+        if reason == "in_scope":
+            included.append(record)
+            counts["in_scope"] += 1
+            continue
+        counter = (
+            "filtered_ambiguous"
+            if reason in {"ambiguous_mixed_roles", "no_isolated_design_role"}
+            else "filtered_non_design"
+        )
+        counts[counter] += 1
+        LOGGER.info(
+            "비디자인 기회 제외 (URL=%s, ID=%s, reason=%s, title=%s)",
+            url,
+            record.post_id,
+            reason,
+            record.title,
+        )
+    return included, counts
 
 
 def main() -> None:
@@ -69,6 +96,7 @@ def main() -> None:
         urls = urls[: settings.max_posts_per_run]
 
     counters = {"created": 0, "updated": 0, "unchanged": 0, "skipped": 0, "errors": 0}
+    filter_counters = {"in_scope": 0, "filtered_non_design": 0, "filtered_ambiguous": 0}
     LOGGER.info("처리 대상 URL: %s개", len(urls))
 
     for index, url in enumerate(urls, start=1):
@@ -76,20 +104,15 @@ def main() -> None:
         LOGGER.info("[%s/%s] %s", index, len(urls), url)
         existing_for_missing = None
         try:
-            if notion is not None:
-                existing_for_missing = notion.query_by_post_id(
-                    settings.notion_data_source_id, post_id
-                )
             records = scraper.fetch_posts(url)
+            records, current_filter_counts = _filter_in_scope_records(records, url)
+            for name, count in current_filter_counts.items():
+                filter_counters[name] += count
             for record in records:
                 existing = None
                 if notion is not None:
-                    existing = (
-                        existing_for_missing
-                        if record.post_id == post_id
-                        else notion.query_by_post_id(
-                            settings.notion_data_source_id, record.post_id
-                        )
+                    existing = notion.query_by_post_id(
+                        settings.notion_data_source_id, record.post_id
                     )
 
                 quality_issues: list[str] = []
@@ -134,6 +157,10 @@ def main() -> None:
                     counters["updated" if changed else "unchanged"] += 1
         except SiteNotFoundError:
             LOGGER.warning("원문이 사라졌거나 404입니다: %s", url)
+            if notion is not None:
+                existing_for_missing = notion.query_by_post_id(
+                    settings.notion_data_source_id, post_id
+                )
             if notion is not None and existing_for_missing is not None:
                 notion.mark_inaccessible(existing_for_missing)
                 counters["updated"] += 1
@@ -148,6 +175,8 @@ def main() -> None:
             LOGGER.exception("게시물 처리 중 오류가 발생했습니다: %s", url)
 
     LOGGER.info("동기화 결과: %s", counters)
+    LOGGER.info("필터 결과: %s", filter_counters)
+    print("FILTER_SUMMARY=" + json.dumps(filter_counters, ensure_ascii=False))
     print("SYNC_SUMMARY=" + json.dumps(counters, ensure_ascii=False))
     if counters["errors"]:
         sys.exit(1)

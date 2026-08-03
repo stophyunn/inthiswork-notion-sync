@@ -1,10 +1,11 @@
 import pytest
 from bs4 import BeautifulSoup
 
-from src.models import ContentBlock
+from src.models import ContentBlock, PostRecord
 from src.parser import (
     _quality_reasons,
     _structured_sections_are_consistent,
+    classify_opportunity_scope,
     heading_candidates,
     parse_post_html,
     parse_post_html_records,
@@ -69,6 +70,92 @@ def test_parse_competition():
     assert record.role_or_program == "2026 브랜드 디자인 공모전"
     assert "300만원" in record.benefits_prize
     assert record.deadline == "2099-09-10"
+
+
+def test_toss_ios_is_a_job_but_outside_design_scope():
+    record = parse_post_html(
+        _fixture("toss_ios_372901_live_shape"),
+        "https://inthiswork.com/archives/372901",
+    )
+    assert record.content_type == "채용공고"
+    assert record.target_audience == ""
+    assert record.qualifications == "Swift 개발 경험이 있는 분"
+    assert record.design_fields == []
+    assert classify_opportunity_scope(record) == "non_design_role"
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("회사｜Product Designer", "in_scope"),
+        ("회사｜Visual Designer", "in_scope"),
+        ("회사｜Content Designer", "in_scope"),
+        ("회사｜iOS Developer", "non_design_role"),
+        ("회사｜Research Scientist", "non_design_role"),
+        ("회사｜AI Research Assistant", "non_design_role"),
+        ("JYP｜2026 일반 공개채용", "non_design_role"),
+    ],
+)
+def test_job_scope_uses_the_role_title_not_incidental_body_terms(title, expected):
+    record = PostRecord(
+        post_id="scope", source_url="https://inthiswork.com/archives/scope",
+        title=title, role_or_program=title.split("｜")[-1], content_type="채용공고",
+        body_blocks=[ContentBlock(kind="paragraph", text="UI 인터랙션과 디자인 시스템, 사진과 동영상")],
+    )
+    assert classify_opportunity_scope(record) == expected
+
+
+def test_scope_uses_application_paths_and_handles_mixed_or_design_programs():
+    design_path = PostRecord(
+        post_id="1", source_url="https://inthiswork.com/archives/1", title="공개채용",
+        role_or_program="직무", content_type="채용공고",
+        body_blocks=[ContentBlock(kind="paragraph", text="Design > Visual Design")],
+    )
+    service_path = PostRecord(
+        post_id="2", source_url="https://inthiswork.com/archives/2", title="공개채용",
+        role_or_program="콘텐츠 기획/운영", content_type="채용공고",
+        body_blocks=[ContentBlock(kind="paragraph", text="Service & Business > Content Development")],
+    )
+    mixed = PostRecord(
+        post_id="3", source_url="https://inthiswork.com/archives/3",
+        title="동국제약｜관리/마케팅/영업/디자인/개발/연구 등 모집",
+        role_or_program="관리/마케팅/영업/디자인/개발/연구 등 모집", content_type="채용공고",
+    )
+    contest = PostRecord(
+        post_id="378233", source_url="https://inthiswork.com/archives/378233",
+        title="현대리바트｜디자인·마케팅 영챌린지", role_or_program="디자인·마케팅 영챌린지",
+        content_type="공모전",
+    )
+    generic_program = PostRecord(
+        post_id="4", source_url="https://inthiswork.com/archives/4", title="개발자 교육 프로그램",
+        role_or_program="개발자 교육 프로그램", content_type="교육·프로그램",
+    )
+    assert classify_opportunity_scope(design_path) == "in_scope"
+    assert classify_opportunity_scope(service_path) == "non_design_role"
+    assert classify_opportunity_scope(mixed) == "no_isolated_design_role"
+    assert classify_opportunity_scope(contest) == "in_scope"
+    assert classify_opportunity_scope(generic_program) == "non_design_opportunity"
+
+
+def test_krafton_and_lg_research_jobs_are_filtered_but_krafton_sections_are_clean():
+    krafton = parse_post_html(
+        _fixture("krafton_358889_live_shape"),
+        "https://inthiswork.com/archives/358889",
+    )
+    lg = parse_post_html(
+        _fixture("lg_ra_373250_live_shape"),
+        "https://inthiswork.com/archives/373250",
+    )
+    assert krafton.content_type == "채용공고"
+    assert krafton.key_duties == "파운데이션 모델의 내부 표현을 연구합니다.\n학습 방법론을 검증합니다."
+    assert len(krafton.preferred_qualifications.splitlines()) == 2
+    assert "서류 전형" not in krafton.preferred_qualifications
+    assert "필요 서류" not in krafton.preferred_qualifications
+    assert krafton.essay_questions == ""
+    assert krafton.pre_assignment == ""
+    assert classify_opportunity_scope(krafton) == "non_design_role"
+    assert lg.content_type == "채용공고"
+    assert classify_opportunity_scope(lg) == "non_design_role"
 
 
 def test_empty_body_requires_review_and_job_title_is_classified():
