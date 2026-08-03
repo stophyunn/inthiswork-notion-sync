@@ -1102,6 +1102,28 @@ def _join_complete_lines(lines: list[str], max_chars: int) -> str:
     return clean_text("\n".join(output))
 
 
+def _combine_section_candidates(
+    candidates: list[tuple[int, int, list[str]]],
+) -> list[str]:
+    """Combine non-empty section candidates in source order without duplicates."""
+    combined: list[str] = []
+    seen: set[str] = set()
+    for _, _, lines in sorted(candidates, key=lambda item: item[1]):
+        candidate_lines = [
+            clean_text(line)
+            for line in lines
+            if clean_text(line) and not _is_decoration_only(line)
+        ]
+        candidate_lines = list(dict.fromkeys(candidate_lines))
+        if not candidate_lines or set(candidate_lines).issubset(seen):
+            continue
+        for line in candidate_lines:
+            if line not in seen:
+                combined.append(line)
+                seen.add(line)
+    return combined
+
+
 def _extract_section(
     blocks: list[ContentBlock],
     heading_patterns: list[str],
@@ -1172,18 +1194,10 @@ def _extract_section(
         candidates.append((priority, start_index, output))
     if not candidates:
         return ""
-    # Explicit headings win over broad natural-language headings. For equal
-    # headings prefer the later complete section, avoiding introductory copies.
+    # Repeated qualifications are additive even when their heading styles have
+    # different priorities. Other sections retain explicit-heading preference.
     if combine_candidates:
-        max_priority = max(item[0] for item in candidates)
-        selected = []
-        for _, _, lines in sorted(
-            (item for item in candidates if item[0] == max_priority),
-            key=lambda item: item[1],
-        ):
-            for line in lines:
-                if line not in selected:
-                    selected.append(line)
+        selected = _combine_section_candidates(candidates)
     else:
         _, _, selected = max(candidates, key=lambda item: (item[0], item[1]))
     while selected and _is_decoration_only(selected[0]):
