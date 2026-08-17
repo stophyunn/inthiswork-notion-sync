@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 from bs4 import BeautifulSoup
 
@@ -36,6 +38,16 @@ JOB_HTML = """
 </article>
 </body></html>
 """
+
+
+@pytest.fixture
+def parser_date_2026_08_12(monkeypatch):
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 8, 12)
+
+    monkeypatch.setattr("src.parser.date", FixedDate)
 
 
 ACTIVITY_HTML = """
@@ -279,7 +291,9 @@ def test_empty_body_requires_review_and_job_title_is_classified():
     assert record.collection_status == "검토 필요"
 
 
-def test_content_root_scores_candidates_and_deduplicates_fusion_body():
+def test_content_root_scores_candidates_and_deduplicates_fusion_body(
+    parser_date_2026_08_12,
+):
     html = """
     <article><h1 class="entry-title">회사｜UI/UX 디자이너 인턴</h1>
       <div class="post-content"></div>
@@ -308,7 +322,7 @@ def _fixture(post_id: str) -> str:
     return Path(f"tests/fixtures/{post_id}.html").read_text(encoding="utf-8")
 
 
-def test_regression_379538_current_fusion_structure():
+def test_regression_379538_current_fusion_structure(parser_date_2026_08_12):
     record = parse_post_html(_fixture("379538"), "https://inthiswork.com/archives/379538")
 
     assert record.content_type == "채용공고"
